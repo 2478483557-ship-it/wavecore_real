@@ -1,0 +1,24 @@
+# Vivado 工程中间文件（不提交，只提交源码与最终报告）
+*.jou
+*.log
+*.wdb
+*.rpt.tmp
+*.cache/
+*.hw/
+*.ip_user_files/
+*.sim/
+*.runs/
+*.srcs/
+.Xil/
+*.xpe
+webtalk_*
+usage_statistics_*
+
+# 综合/实现生成的网表与中间产物（保留 build/ 下人工整理的报告）
+*.dcp
+
+# 系统文件
+Thumbs.db
+.DS_Store
+
+# 注意：.bit 比特流较小且是"可复现验证"证据，建议提交到 board/ 目录
