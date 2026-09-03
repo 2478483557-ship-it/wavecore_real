@@ -43,3 +43,6 @@ set_property -dict {IOSTANDARD LVCMOS33 PACKAGE_PIN D20} [get_ports ad_clk]
 
 # --- UART TX to CH340 USB-serial (LVCMOS33, B16 bank) ---
 set_property -dict {IOSTANDARD LVCMOS33 PACKAGE_PIN D17} [get_ports uart_txd]
+
+# --- UART RX from CH340 (LVCMOS33, B16 bank, M5 commands) ---
+set_property -dict {IOSTANDARD LVCMOS33 PACKAGE_PIN E14} [get_ports uart_rxd]

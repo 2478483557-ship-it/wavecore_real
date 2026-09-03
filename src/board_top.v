@@ -18,7 +18,8 @@ module board_top (
     output wire [7:0]  da_data,    // DAC 数据总线      (AD9708: C19~C13)
     output wire        ad_clk,     // ADC 采样时钟 25MHz (AD9280: D20)
     input  wire [7:0]  ad_data,    // ADC 数据总线      (AD9280: B22~D16)
-    output wire        uart_txd    // 串口发送 (CH340: D17, 115200)
+    output wire        uart_txd,   // 串口发送 (CH340: D17, 115200)
+    input  wire        uart_rxd    // 串口接收 (CH340: E14, 115200, M5 命令)
 );
 
     wire [31:0] fcw;               // 频率控制字(由 freq_ctrl 决定)
@@ -29,6 +30,10 @@ module board_top (
     wire [15:0] meas_cnt;          // 频率计: 周期计数
     wire [7:0]  meas_vpp;          // 频率计: 峰峰值
     wire        meas_done;         // 频率计: 测量完成脉冲
+    wire [7:0]  rx_byte;           // uart_rx 收到的字节
+    wire        rx_done;           // uart_rx 收完脉冲
+    wire        preset_load;       // 串口切档命令脉冲
+    wire [1:0]  preset_val;        // 串口目标档位
 
     // ---- 0. 按键消抖: key0 -> 单脉冲 ----
     key_debounce u_key (
@@ -38,13 +43,33 @@ module board_top (
         .key_pulse (key_pulse)
     );
 
-    // ---- 0.5 频率档位控制: 按键脉冲 -> fcw + LED ----
+    // ---- 0.5 频率档位控制: 按键/串口命令 -> fcw + LED ----
     freq_ctrl u_freq (
-        .clk       (sys_clk  ),
-        .rst_n     (sys_rst_n),
-        .key_pulse (key_pulse),
-        .fcw       (fcw      ),
-        .led       (led      )
+        .clk         (sys_clk     ),
+        .rst_n       (sys_rst_n   ),
+        .key_pulse   (key_pulse   ),
+        .preset_load (preset_load ),
+        .preset_val  (preset_val  ),
+        .fcw         (fcw         ),
+        .led         (led         )
+    );
+
+    // ---- 0.7 串口接收 + 命令解析(M5a: 电脑切档) ----
+    uart_rx u_rx (
+        .clk     (sys_clk   ),
+        .rst_n   (sys_rst_n ),
+        .rxd     (uart_rxd  ),
+        .rx_data (rx_byte   ),
+        .rx_done (rx_done   )
+    );
+
+    cmd_decoder u_cmd (
+        .clk         (sys_clk     ),
+        .rst_n       (sys_rst_n   ),
+        .rx_byte     (rx_byte     ),
+        .rx_done     (rx_done     ),
+        .preset_load (preset_load ),
+        .preset_val  (preset_val  )
     );
 
     // ---- 1. 相位累加器(NCO) ----

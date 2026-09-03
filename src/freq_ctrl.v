@@ -12,21 +12,25 @@
 //===========================================================================
 
 module freq_ctrl (
-    input  wire        clk,        // 系统时钟 50MHz
-    input  wire        rst_n,      // 复位, 低有效
-    input  wire        key_pulse,  // 消抖后的按键脉冲(每按一次来一个)
-    output reg  [31:0] fcw,        // 当前档位对应的频率控制字
-    output reg  [3:0]  led         // 档位指示 (亮灯个数 = 档位+1)
+    input  wire        clk,          // 系统时钟 50MHz
+    input  wire        rst_n,        // 复位, 低有效
+    input  wire        key_pulse,    // 消抖后的按键脉冲(每按一次来一个)
+    input  wire        preset_load,  // 串口命令: 直接设定档位(脉冲)
+    input  wire [1:0]  preset_val,   // 串口命令: 目标档位 0~3
+    output reg  [31:0] fcw,          // 当前档位对应的频率控制字
+    output reg  [3:0]  led           // 档位指示 (亮灯个数 = 档位+1)
 );
 
     reg [1:0] idx;   // 档位编号 0~3 (2bit 就能表示 4 个档位)
 
-    // 每来一个按键脉冲, 档位 +1, 到 3 就回 0(循环)
+    // 档位来源: ①串口命令(绝对设定, 优先) ②按键(循环 +1)
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n)
             idx <= 2'd0;
+        else if (preset_load)
+            idx <= preset_val;               // 串口: 直接跳到指定档
         else if (key_pulse)
-            idx <= idx + 2'd1;
+            idx <= idx + 2'd1;               // 按键: 循环切档
     end
 
     // 档位 -> 频率控制字 / LED 亮灯数 (组合逻辑查表, 类似前面 ROM 的思路)
