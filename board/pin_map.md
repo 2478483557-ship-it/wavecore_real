@@ -9,10 +9,10 @@
 |---|---|---|---|
 | sys_clk | R4 | LVCMOS15 | 50MHz 板载晶振 |
 | sys_rst_n | U7 | LVCMOS15 | 复位，低有效 |
-| key[0..3] | T4 T3 R6 T6 | LVCMOS33 | 按键 |
-| touch_key | V8 | LVCMOS33 | 触摸按键 |
-| led[0..3] | V9 Y8 Y7 W7 | LVCMOS33 | LED |
-| beep | V7 | LVCMOS33 | 蜂鸣器 |
+| key[0..3] | T4 T3 R6 T6 | **LVCMOS15** | 按键（bank34 = 1.5V 域，官方 XDC 核实 9/3） |
+| touch_key | V8 | **LVCMOS15** | 触摸按键（bank34） |
+| led[0..3] | V9 Y8 Y7 W7 | **LVCMOS15** | LED（bank34） |
+| beep | V7 | **LVCMOS15** | 蜂鸣器（bank34） |
 | uart_rxd | E14 | LVCMOS33 | USB 串口接收（CH340）→ 上位机 |
 | uart_txd | D17 | LVCMOS33 | USB 串口发送（CH340）→ 上位机 |
 | uart2_rxd | E13 | LVCMOS33 | ATK 模块口接收 |
