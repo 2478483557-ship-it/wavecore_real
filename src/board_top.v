@@ -27,13 +27,15 @@ module board_top (
     wire [7:0]  rom_addr;          // NCO 输出的 ROM 地址
     wire [7:0]  sine;              // 查表得到的正弦样点
     wire [7:0]  ad_cap;            // 采集到的 ADC 数据
-    wire [15:0] meas_cnt;          // 频率计: 周期计数
+    wire [23:0] meas_freq;         // 频率计: 测量频率(Hz)
     wire [7:0]  meas_vpp;          // 频率计: 峰峰值
     wire        meas_done;         // 频率计: 测量完成脉冲
     wire [7:0]  rx_byte;           // uart_rx 收到的字节
     wire        rx_done;           // uart_rx 收完脉冲
     wire        preset_load;       // 串口切档命令脉冲
     wire [1:0]  preset_val;        // 串口目标档位
+    wire        arb_load;          // 串口任意频率命令脉冲
+    wire [31:0] arb_fcw;           // 串口任意频率 fcw
 
     // ---- 0. 按键消抖: key0 -> 单脉冲 ----
     key_debounce u_key (
@@ -43,13 +45,15 @@ module board_top (
         .key_pulse (key_pulse)
     );
 
-    // ---- 0.5 频率档位控制: 按键/串口命令 -> fcw + LED ----
+    // ---- 0.5 频率控制: 按键/串口切档/串口任意频率 -> fcw + LED ----
     freq_ctrl u_freq (
         .clk         (sys_clk     ),
         .rst_n       (sys_rst_n   ),
         .key_pulse   (key_pulse   ),
         .preset_load (preset_load ),
         .preset_val  (preset_val  ),
+        .arb_load    (arb_load    ),
+        .arb_fcw     (arb_fcw     ),
         .fcw         (fcw         ),
         .led         (led         )
     );
@@ -69,7 +73,9 @@ module board_top (
         .rx_byte     (rx_byte     ),
         .rx_done     (rx_done     ),
         .preset_load (preset_load ),
-        .preset_val  (preset_val  )
+        .preset_val  (preset_val  ),
+        .arb_load    (arb_load    ),
+        .arb_fcw     (arb_fcw     )
     );
 
     // ---- 1. 相位累加器(NCO) ----
@@ -106,12 +112,12 @@ module board_top (
         .ad_cap    (ad_cap   )
     );
 
-    // ---- 3.6 频率计 + 峰峰值测量(10ms 闸门) ----
+    // ---- 3.6 频率计 v2: 自动双模式(闸门/测周), 直接出 Hz ----
     freq_meter u_meter (
         .clk       (sys_clk    ),
         .rst_n     (sys_rst_n  ),
         .ad_cap    (ad_cap     ),
-        .freq_cnt  (meas_cnt   ),
+        .freq_hz   (meas_freq  ),
         .vpp       (meas_vpp   ),
         .meas_done (meas_done  )
     );
@@ -121,7 +127,7 @@ module board_top (
         .clk       (sys_clk    ),
         .rst_n     (sys_rst_n  ),
         .meas_done (meas_done  ),
-        .freq_cnt  (meas_cnt   ),
+        .freq_hz   (meas_freq  ),
         .vpp       (meas_vpp   ),
         .uart_txd  (uart_txd   )
     );

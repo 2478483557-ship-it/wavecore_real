@@ -1,25 +1,24 @@
 //===========================================================================
 // 模块名   : measure_report
-// 功能     : 每次测量结束, 通过串口上报一行结果(M4b)
+// 功能     : 每次测量结束, 通过串口上报一行结果(M4b/P0-2)
 // 上报格式 : 固定宽度, 方便电脑解析:
 //            "F=0100000Hz V=255\r\n"
 //            7 位频率(Hz) + 3 位 Vpp, 前导补 0
+// v1.1 变化 : freq_meter 现在直接输出 Hz(freq_hz), 不再乘 100
 // 波特率   : 115200, 8N1
-// 作者     : WaveCore 队长 | 日期: 2026-09-03 | 版本: v3.0(极简)
+// 作者     : WaveCore 队长 | 日期: 2026-09-05 | 版本: v1.1
 //===========================================================================
 
 module measure_report (
     input  wire        clk,        // 系统时钟 50MHz
     input  wire        rst_n,      // 复位, 低有效
     input  wire        meas_done,  // freq_meter 测量完成脉冲
-    input  wire [15:0] freq_cnt,   // 周期计数(频率 = 该值 x100 Hz)
+    input  wire [23:0] freq_hz,    // 测量频率(Hz, 直接来自 freq_meter)
     input  wire [7:0]  vpp,        // 峰峰值
     output wire        uart_txd    // 串口发送脚 (CH340, 达芬奇Pro: D17)
 );
 
-    //================ 换算 + BCD ================
-    wire [23:0] freq_hz = {8'd0, freq_cnt} * 24'd100;   // 最大 6,553,500
-
+    //================ BCD 转换 ================
     wire [27:0] freq_bcd;
     wire        freq_done;
     reg         freq_start;
