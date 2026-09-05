@@ -9,7 +9,7 @@
 //        f = 32 x 50MHz / clks = 1.6e9 / clks
 //        用于 < 10kHz (32 周期平均, 量化误差 0.001% 级)
 //        clks 由恢复余数除法器(div_restore)算出, 算法已 Python 逐拍验证
-// 迟滞比较(HYST)沿用 v1.1: 跌破112武装 -> 升过144计一个周期, 抗噪声
+// 迟滞比较 v2.3: 阈值=上一轮波形中心±动态死区(幅度自适应)
 // 输出 : freq_hz(直接 Hz, 供串口显示) + vpp + meas_done
 // 作者 : WaveCore 队长 | 日期: 2026-09-05 | 版本: v2.0
 //===========================================================================
@@ -41,9 +41,14 @@ module freq_meter #(
     reg [7:0]  thr_h;      // 自适应高阈值(上一轮波形中心 +12)
     wire [8:0] mid_sum = {1'b0, max_v} + {1'b0, min_v};  // 9位求和防溢出
     wire [7:0] mid_c   = mid_sum[8:1];                    // (max+min)/2 = 中心
-    // 中心±12(钳到 0~255)
-    wire [7:0] next_l = (mid_c > 8'd12) ? (mid_c - 8'd12) : 8'd0;
-    wire [7:0] next_h = (mid_c > 8'd243)? 8'd255 : (mid_c + 8'd12);
+    // 动态死区 db: 上一轮幅度 Vpp>>4, 夹在 4~12 (幅度大死区宽抗噪, 小则窄保灵敏)
+    reg [7:0]  vpp_last;                     // 上一轮测到的峰峰值
+    wire [7:0] db_half = vpp_last[7:4];      // Vpp/16
+    wire [3:0] db_cur  = (db_half > 4'd12) ? 4'd12 :
+                         (db_half < 4'd4)  ? 4'd4  : db_half[3:0];
+    // 阈值 = 中心 ± db_cur (钳到 0~255)
+    wire [7:0] next_l = (mid_c > db_cur) ? (mid_c - db_cur) : 8'd0;
+    wire [7:0] next_h = (mid_c > (8'd255 - db_cur)) ? 8'd255 : (mid_c + db_cur);
     wire upcross = armed && (ad_cap >= thr_h);
 
     // ============ 粗测(闸门) ============
@@ -91,6 +96,7 @@ module freq_meter #(
             min_v      <= 8'd255;
             freq_hz    <= 24'd0;
             vpp        <= 8'd0;
+            vpp_last   <= 8'd255;
             meas_done  <= 1'b0;
             t_ok       <= 1'b0;
             wd_cnt     <= 13'd0;
@@ -116,6 +122,7 @@ module freq_meter #(
                             freq_hz  <= (cnt_gate * 17'd100 > 24'd9_999_999) ?
                                         24'd9_999_999 : (cnt_gate * 17'd100);
                             vpp      <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
+                        vpp_last   <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
                             meas_done <= 1'b1;
                             gate_cnt <= 19'd0;
                             cnt_gate <= 17'd0;
@@ -155,6 +162,7 @@ module freq_meter #(
                                 // 无效(计时超限=信号太低 <~95Hz): 报 0
                                 freq_hz  <= 24'd0;
                                 vpp      <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
+                        vpp_last   <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
                                 meas_done <= 1'b1;
                                 thr_l      <= next_l;
                                 thr_h      <= next_h;
@@ -174,6 +182,7 @@ module freq_meter #(
                     if (t_cnt == 24'hFFFFFF) begin
                         freq_hz  <= 24'd0;            // 超时(335ms 没数满32周期): 报 0
                         vpp      <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
+                        vpp_last   <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
                         meas_done <= 1'b1;
                         thr_l      <= next_l;
                         thr_h      <= next_h;
@@ -192,6 +201,7 @@ module freq_meter #(
                         freq_hz  <= div_done ? (t_ok ? clamp_val : 24'd0)
                                              : 24'd0;              // 除法器异常兜底 0
                         vpp      <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
+                        vpp_last   <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
                         meas_done <= 1'b1;
                         thr_l      <= next_l;
                         thr_h      <= next_h;

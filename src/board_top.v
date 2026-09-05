@@ -132,11 +132,16 @@ module board_top (
         .uart_txd  (uart_txd   )
     );
 
+    // ---- 3.8 FFT 频谱演示(B1 已点亮, 输出悬空供后续 B3 频谱显示) ----
+    fft_demo u_fft_demo (
+        .clk     (sys_clk   ),
+        .rst_n   (sys_rst_n ),
+        .ad_cap  (ad_cap    ),
+        .fft_hz  (          ),
+        .fft_done(          )
+    );
+
     // ---- 4. ILA 片上逻辑分析仪(调试观察用) ----
-    // 前置条件: IP Catalog 里已生成名为 ila_0 的 ILA IP
-    // 注意 M4a: ila_0 需改为 3 个探针!
-    // (Sample Depth=1024,
-    //  probe0 宽8 接 da_data, probe1 宽8 接 rom_addr, probe2 宽8 接 ad_cap)
     ila_0 u_ila (
         .clk    (sys_clk  ),
         .probe0 (da_data  ),
