@@ -15,7 +15,8 @@ module measure_report (
     input  wire        meas_done,  // freq_meter 测量完成脉冲
     input  wire [23:0] freq_hz,    // 测量频率(Hz, 直接来自 freq_meter)
     input  wire [7:0]  vpp,        // 峰峰值
-    output wire        uart_txd    // 串口发送脚 (CH340, 达芬奇Pro: D17)
+    output wire        uart_txd,   // 串口发送脚 (CH340, 达芬奇Pro: D17)
+    output wire        meas_busy   // 1=正在发送(供 fft_report 避让用)
 );
 
     //================ BCD 转换 ================
@@ -44,6 +45,7 @@ module measure_report (
     wire      tx_busy;
     uart_tx u_uart (.clk(clk), .rst_n(rst_n), .tx_data(tx_byte),
                     .tx_start(tx_start), .tx_busy(tx_busy), .txd(uart_txd));
+    assign meas_busy = tx_busy;
 
     //================ 发送状态机 ================
     reg [2:0] state;

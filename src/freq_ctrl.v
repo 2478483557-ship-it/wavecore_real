@@ -21,7 +21,8 @@ module freq_ctrl (
     input  wire        arb_load,     // 串口 0x85: 任意频率生效(脉冲)
     input  wire [31:0] arb_fcw,      // 任意频率对应的 fcw(已在 cmd_decoder 算好)
     output wire [31:0] fcw,          // 输出给 NCO 的频率控制字
-    output wire [3:0]  led           // LED 指示
+    output wire [3:0]  led,          // LED 指示
+    output reg         single_chg    // 1拍脉冲: 发生了单音设定(按键/0x81/0x85)
 );
 
     reg [1:0]  idx;          // 预设档位编号 0~3
@@ -34,8 +35,10 @@ module freq_ctrl (
             idx      <= 2'd0;
             arb_mode <= 1'b0;
             fcw_arb  <= 32'd0;
+            single_chg <= 1'b0;
         end
         else begin
+            single_chg <= (preset_load | arb_load | key_pulse);  // 单音设定脉冲
             if (arb_load) begin
                 // 任意频率命令: 锁存 fcw 并切到自定义模式
                 fcw_arb  <= arb_fcw;

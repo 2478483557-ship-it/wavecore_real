@@ -6,6 +6,7 @@
 // 已支持命令:
 //   0x81 切换频率档位   payload=1B(0~3) -> preset_load + preset_val
 //   0x85 任意频率设置   payload=4B(小端 Hz) -> arb_load + arb_fcw(P0-1)
+//   0x87 第二频率设置   payload=4B(小端 Hz) -> dual_load + dual_fcw(双音, A)
 //   其它命令暂忽略
 // 任意频率换算(P0-1 新知识):
 //   fcw = Hz x 2^32 / 50MHz, 里面有个"除以 5000 万"。
@@ -24,7 +25,9 @@ module cmd_decoder (
     output reg         preset_load,// 切档命令有效(1 拍脉冲)
     output reg  [1:0]  preset_val, // 目标档位 0~3
     output reg         arb_load,   // 任意频率命令有效(1 拍脉冲)
-    output reg  [31:0] arb_fcw     // 任意频率对应的 fcw
+    output reg  [31:0] arb_fcw,    // 任意频率对应的 fcw
+    output reg         dual_load,  // 0x87 第二频率命令有效(1 拍脉冲)
+    output reg  [31:0] dual_fcw    // 第二频率对应的 fcw
 );
 
     // 换算常量: round(2^32/5e7 x 2^24)
@@ -60,6 +63,8 @@ module cmd_decoder (
             preset_val  <= 2'd0;
             arb_load    <= 1'b0;
             arb_fcw     <= 32'd0;
+            dual_load   <= 1'b0;
+            dual_fcw    <= 32'd0;
             typ_r       <= 8'd0;
             len_r       <= 16'd0;
             sum_r       <= 8'd0;
@@ -68,6 +73,7 @@ module cmd_decoder (
         else begin
             preset_load <= 1'b0;               // 脉冲默认清 0
             arb_load    <= 1'b0;
+            dual_load   <= 1'b0;
             if (rx_done) begin
                 case (st)
                     ST_H1: begin
@@ -112,6 +118,10 @@ module cmd_decoder (
                                 8'h85: begin             // 任意频率
                                     arb_load <= 1'b1;
                                     arb_fcw  <= hz_fcw;
+                                end
+                                8'h87: begin             // 第二频率(双音)
+                                    dual_load <= 1'b1;
+                                    dual_fcw  <= hz_fcw;
                                 end
                                 default: ;               // 其余命令暂不支持
                             endcase

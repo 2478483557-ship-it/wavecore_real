@@ -34,6 +34,7 @@
 | SK-012 | 迟滞阈值要自适应波形中心 | 固定阈值在信号带直流偏置时失效 | 已录入 |
 | SK-013 | 超位宽字面量被截断成 0 | `24'h1_000000`(=2^24) 被 24 位截断为 0，比较永远错 | 已录入 |
 | SK-014 | xfft(BFP)状态通道必须常收 | 状态字不接收 → 核心卡死无输出 | 已录入 |
+| SK-015 | 大查找表/大缓存必须用块 RAM | reg 数组/case 大表会爆 FDRE/LUT | 已录入 |
 
 ## 已录入条目
 
@@ -200,6 +201,17 @@
 - **失效条件**：Scaled/Unscaled 模式无此问题；BFP 与 Pipelined Streaming 组合时必现
 - **来源**：WaveCore P1 FFT 实测踩坑（2026-09-05：LED 状态探针显示卡在 WAIT=11，拉高 status ready 后帧数恢复增长）
 - **已验证效果**：拉高后帧计数持续增长、1kHz 谱峰 bin=20 精确命中
+
+## SK-015：大查找表/大缓存必须走块 RAM，否则撑爆 FDRE/LUT
+
+- **适用场景**：综合/实现报 `DRC UTLZ-1`（FDRE 或 Slice LUTs over-utilized）；原因常见于 4096 深度 reg 数组、几百行 case 查找表被综合成寄存器/分布 LUT
+- **使用方法**：
+  1. 大缓存（如 4096×8 时域缓冲）：声明加 `(* ram_style = "block" *)`，并且**读、写放两个不同的 always**（同 always 读写易被推断成寄存器阵列，触发 FDRE 超限）
+  2. 大查找表（如 1024 点窗/波形表）：不要用组合 case（吃几千 LUT），用 `initial $readmemh("绝对路径.hex", mem)` + `always @(posedge clk) q<=mem[addr]`（最可靠块 ROM）；hex 数据文件放工程 src 并**仓库/工程双份**
+  3. case 写在时钟沿内+属性贴 reg 声明(Vivado 可能仍不进 BRAM)——直接 readmemh 最稳
+- **失效条件**：BRAM 不够时(如 4096 双缓冲 x2)再考虑 LUTRAM/优化；35t 共 50 块 36Kb
+- **来源**：WaveCore P1 实测(2026-09-05)：FDRE 需 77108>65950 → f_ram 改块RAM；LUT 21775>20800 → hann 改 readmemh 块 ROM → 最终 **LUT 19282 / BRAM 7**
+- **已验证效果**：改后 DRC 通过并可布线
 
 ## 怎么积累
 
