@@ -27,7 +27,8 @@ module cmd_decoder (
     output reg         arb_load,   // 任意频率命令有效(1 拍脉冲)
     output reg  [31:0] arb_fcw,    // 任意频率对应的 fcw
     output reg         dual_load,  // 0x87 第二频率命令有效(1 拍脉冲)
-    output reg  [31:0] dual_fcw    // 第二频率对应的 fcw
+    output reg  [31:0] dual_fcw,   // 第二频率对应的 fcw
+    output reg         wave_req    // 0x83 请求波形(1 拍脉冲)
 );
 
     // 换算常量: round(2^32/5e7 x 2^24)
@@ -65,6 +66,7 @@ module cmd_decoder (
             arb_fcw     <= 32'd0;
             dual_load   <= 1'b0;
             dual_fcw    <= 32'd0;
+            wave_req    <= 1'b0;
             typ_r       <= 8'd0;
             len_r       <= 16'd0;
             sum_r       <= 8'd0;
@@ -74,6 +76,7 @@ module cmd_decoder (
             preset_load <= 1'b0;               // 脉冲默认清 0
             arb_load    <= 1'b0;
             dual_load   <= 1'b0;
+            wave_req    <= 1'b0;
             if (rx_done) begin
                 case (st)
                     ST_H1: begin
@@ -122,6 +125,9 @@ module cmd_decoder (
                                 8'h87: begin             // 第二频率(双音)
                                     dual_load <= 1'b1;
                                     dual_fcw  <= hz_fcw;
+                                end
+                                8'h83: begin             // 请求波形(F2-A)
+                                    wave_req <= 1'b1;
                                 end
                                 default: ;               // 其余命令暂不支持
                             endcase

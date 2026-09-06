@@ -16,7 +16,8 @@ module measure_report (
     input  wire [23:0] freq_hz,    // 测量频率(Hz, 直接来自 freq_meter)
     input  wire [7:0]  vpp,        // 峰峰值
     output wire        uart_txd,   // 串口发送脚 (CH340, 达芬奇Pro: D17)
-    output wire        meas_busy   // 1=正在发送(供 fft_report 避让用)
+    output wire        meas_busy,  // 1=正在发送(供 fft_report/wave 避让用)
+    input  wire        ext_hold    // 1=波形帧占用 TX, 本行暂停开新行(波形上传 F2)
 );
 
     //================ BCD 转换 ================
@@ -99,7 +100,7 @@ module measure_report (
             vpp_start  <= 1'b0;
 
             case (state)
-                S_WAIT: if (meas_done) begin
+                S_WAIT: if (meas_done && !ext_hold) begin
                             freq_start <= 1'b1;
                             state <= S_CF;
                         end

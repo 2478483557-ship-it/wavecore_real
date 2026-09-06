@@ -86,7 +86,8 @@ module board_top (
         .arb_load    (arb_load    ),
         .arb_fcw     (arb_fcw     ),
         .dual_load   (dual_load   ),
-        .dual_fcw    (dual_fcw    )
+        .dual_fcw    (dual_fcw    ),
+        .wave_req    (wave_req_w  )
     );
 
     // ---- 0.8 双音模式控制(0x87 开双音, 任何单音设定自动回单音) ----
@@ -113,6 +114,7 @@ module board_top (
 
     // ---- 2. 正弦查找表 ----
     sine_rom u_rom (
+        .clk  (sys_clk  ),
         .addr (rom_addr ),
         .dout (sine     )
     );
@@ -128,6 +130,7 @@ module board_top (
         .rom_addr (rom_addr2 )
     );
     sine_rom u_rom2 (
+        .clk  (sys_clk   ),
         .addr (rom_addr2 ),
         .dout (sine2     )
     );
@@ -169,7 +172,8 @@ module board_top (
         .freq_hz   (meas_freq  ),
         .vpp       (meas_vpp   ),
         .uart_txd  (m_txd      ),
-        .meas_busy (m_busy     )
+        .meas_busy (m_busy     ),
+        .ext_hold  (wav_hold   )
     );
 
     // ---- 3.8 FFT 频谱演示(B1 已点亮; 输出悬空供后续 B3 频谱显示) ----
@@ -201,9 +205,27 @@ module board_top (
         .fft_done2  (fft_done2_w),
         .fft_hz2    (fft_hz2_w  ),
         .uart_txd   (fft_txd    ),
-        .fft_active (fft_act    )
+        .fft_active (fft_act    ),
+        .ext_hold   (wav_hold   )
     );
-    assign uart_txd = fft_act ? fft_txd : m_txd;   // TX 引脚 2 选 1(窗口互斥)
+    // ---- 3.10 波形帧上传(F2-A): 0x83 请求 -> 传 1024 点(50kHz) ----
+    wire        wave_req_w;    // 0x83 请求
+    wire        wav_txd;       // 波形 TX
+    wire        wav_act;       // 波形占用标志
+    wire        wav_hold;      // 让测量/谱峰暂停
+    wave_frame u_wave (
+        .clk        (sys_clk   ),
+        .rst_n      (sys_rst_n ),
+        .ad_cap     (ad_cap    ),
+        .req        (wave_req_w),
+        .meas_busy  (m_busy    ),
+        .fft_busy   (fft_act   ),
+        .uart_txd   (wav_txd   ),
+        .wav_active (wav_act   ),
+        .wav_hold   (wav_hold  )
+    );
+    // TX 引脚 3 路互斥: 波形 > 谱峰 > 测量
+    assign uart_txd = wav_act ? wav_txd : (fft_act ? fft_txd : m_txd);
 
     // ---- 4. ILA 片上逻辑分析仪(调试观察用) ----
     ila_0 u_ila (

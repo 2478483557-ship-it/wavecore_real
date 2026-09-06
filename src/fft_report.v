@@ -15,7 +15,8 @@ module fft_report (
     input  wire        fft_done2,
     input  wire [23:0] fft_hz2,
     output wire        uart_txd,
-    output wire        fft_active
+    output wire        fft_active,
+    input  wire        ext_hold     // 1=波形帧占用 TX, 本模块暂停开新行
 );
 
     //================ 串口 ================
@@ -96,7 +97,7 @@ module fft_report (
 
             case (state)
                 S_WAIT: begin
-                    if (window_ok) begin
+                    if (window_ok && !ext_hold) begin
                         if (p_s) begin
                             p_s <= 1'b0;
                             c1_start <= 1'b1;
