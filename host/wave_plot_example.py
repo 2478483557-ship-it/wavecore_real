@@ -26,8 +26,10 @@ def try_once(ser, label):
             buf += data
             print(f"     [{label}] 已收 {len(buf)} 字节", end="\r")
             i = buf.find(HEAD)
-            if i >= 0 and len(buf) >= i + 5 + 1024 + 1:
-                return bytes(buf[i:i + 5 + 1024 + 1]), True
+            if i >= 0 and len(buf) >= i + 5:
+                n = buf[i + 3] * 256 + buf[i + 4]          # 从帧头读长度
+                if len(buf) >= i + 5 + n + 1:
+                    return bytes(buf[i:i + 5 + n + 1]), True
     print()
     if len(buf) > 12:
         print(f"     [{label}] 未找到帧头, 收到头12字节: {buf[:12].hex(' ')}")
@@ -41,7 +43,7 @@ def main():
         print(f"[2] 第 {k} 次发送请求波形 0x83 ...")
         frame, ok = try_once(ser, k)
         if ok:
-            npts = frame[3] * 256 + frame[4]
+            npts = frame[3] * 256 + frame[4]             # 点数(由帧头定)
             samples = list(frame[5:5 + npts])
             chk = sum(frame[2:5 + npts]) & 0xFF
             print()
