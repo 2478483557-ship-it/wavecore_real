@@ -4,7 +4,7 @@
 A multi-function signal measurement & spectrum analysis system based on FPGA.
 
 > 全国大学生嵌入式芯片与系统设计竞赛 2026 · FPGA 创新设计赛道（AMD）· 自主选题（初级组）
-> 状态更新：2026-09-05（信号源/自动测量/4096点FFT双峰分辨/串口协议 已全部上板验证 ✅）
+> 状态更新：2026-09-06（信号源/自动测量/4096点FFT双峰分辨/波形上传0x83 已全部上板验证 ✅；Flash 已固化，上电即用）
 
 ---
 
@@ -33,7 +33,8 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 | 3 | 自动测量 | 频率全频段 **100Hz~1MHz 误差<1%**（闸门/测周自动切换+迟滞+自适应阈值）；Vpp 一键测量 | 100Hz±3、1k/5k/37.5k/100k/1M 精确 |
 | 4 | FFT 频谱 | **4096 点 FFT** @50kHz 采样，Hann 加窗，双峰检测 | **1k+1.1k 双音分开：S=1001 + A=1099** |
 | 5 | 串口协议 | 115200-8N1 双向；上行 F=/S=/A=；下行 0x81 切档/0x85 任意频/0x87 双音（带校验和，帧见 `board/uart_protocol.md`） | 电脑远程切频实测 ✅ |
-| 6 | 资源优化 | 大缓存/大表全部 BRAM 化 | Utilization: **LUT 19282/20800, BRAM 7/50** |
+| 6 | 波形上传(0x83) | 请求一次上传最近 **1024 点@50kHz**(20.5ms)波形；RAM 用 blk_mem_gen IP(官方姿势, SK-016) | PC 画出 1kHz 正弦 ✅ |
+| 7 | 资源优化 | 大缓存/大表全部走 BRAM(BMG/hann/f_ram/sine) | Utilization: LUT/FF/BRAM 均在限内, 带 ILA 布局通过 |
 | 7 | 未做(彩蛋/波形帧) | 音乐频谱彩蛋(XADC)、波形/幅度谱帧上传、自研 FFT 对比 → 见 `report/task_overview.md` | - |
 
 ## Hardware / 硬件平台
@@ -55,7 +56,19 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
    - 切 1kHz：`5A A5 85 00 04 E8 03 00 00 74` → F≈1000、S≈1001
    - 加 1.1kHz 开双音：`5A A5 87 00 04 4C 04 00 00 DB` → S=1001 + **A=1099**（双峰分辨！）
 
-> 注意：FFT 当前观察窗 fs=50kHz（只覆盖 ≤25kHz，100k+ 会被混叠到直流，属正常）；高频谱多档采样率在待办。双音下 F= 行会晃是拍频物理现象。
+> 注意：FFT/波形观察窗 fs=50kHz（≤25kHz 才能看清波形/频谱，高频会混叠属正常）；双音下 F= 行会晃是拍频物理现象。
+
+4. 拉波形画图（需 python）：`python host/wave_plot_example.py COM口`（自动发 0x83、解析并画图）
+
+## 给队友：先读这些（按顺序）
+
+1. **README.md**（本文件，总览）
+2. **board/uart_protocol.md**（协议 v1.3：F=/S=/A= 行、0x81/0x85/0x87/0x83 命令、波形帧）
+3. 你的任务书：队友1 → `report/teammate1_task.md`；队友2 → `report/teammate2_task.md`
+4. **board/sample_serial_log.txt**（真实日志，离线练解析用）
+5. 代码入口：上位机 → `host/serial_monitor_starter.py`（起步）；看波形 → `host/wave_plot_example.py`
+
+> **实机须知**：板子已固化到 Flash，**插 USB 上电即出数据**（115200），无需 Vivado。测频率不受限；**看波形/频谱请设 ≤20kHz**（如 1kHz：HEX 发 `5A A5 85 00 04 E8 03 00 00 74`）。串口助手与 Python 不要同时占同一 COM 口。
 
 ## 分工与进度
 
