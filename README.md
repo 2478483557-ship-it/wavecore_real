@@ -73,6 +73,7 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 ## 分工与进度
 
 - FPGA 已完成与待办清单、两位队友任务：见 `report/task_overview.md`
+- **全队 GitHub 协作规则（工位表/流程/小抄）**：见 `report/collab_guide.md`
 - 里程碑：见 `report/progress_log.md`；获奖对标：`report/benchmark.md`；升级规划：`report/upgrade_plan.md`
 
 ## Directory Structure / 目录结构
@@ -80,13 +81,14 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 ```
 wavecore/
 ├── README.md          # 项目简介 + 复现步骤（本文件）
-├── src/               # 设计源码(RTL)：board_top/dds/da/ad/freq_meter/fft_demo/fft_report/cmd_decoder/dual_tone/uart/bin2bcd/hann_rom(+hex)…
+├── src/               # 设计源码(RTL)：board_top/dds/da/ad/freq_meter/fft_demo/fft_report/cmd_decoder/dual_tone/wave_frame/uart/bin2bcd/hann_rom(+hex)…
 ├── sim/               # 仿真 testbench
 ├── build/             # 构建脚本(reset_and_build.tcl)
-├── board/             # 上板：XDC、引脚表、串口协议、实测记录、样例日志
-├── host/              # 上位机起步代码(队友1: serial_monitor_starter.py)
-├── skill/             # 技能包 SK-001~015（踩坑清单）
-└── report/            # 进度/任务书/FFT设计/对标/升级/LLM协作记录
+├── board/             # 上板：XDC、引脚表、串口协议 v1.3、实测记录、样例日志
+├── host/              # 上位机(队友1 工位: serial_monitor_starter.py / wave_plot_example.py)
+├── stm32/             # STM32+串口屏(队友2 工位, 见其 README)
+├── skill/             # 技能包 SK-001~016（踩坑清单）
+└── report/            # 进度/任务书/协作须知/FFT设计/对标/升级/LLM协作记录
 ```
 
 ## How to Reproduce / 复现步骤

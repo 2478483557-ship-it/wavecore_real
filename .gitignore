@@ -22,3 +22,26 @@ Thumbs.db
 .DS_Store
 
 # 注意：.bit 比特流较小且是"可复现验证"证据，建议提交到 board/ 目录
+
+# ============ 队友补充(09-07)：编译产物与临时文件 ============
+# Keil / STM32
+*.o
+*.d
+*.axf
+*.crf
+*.dep
+*.htm
+*.sct
+*.map
+Debug/
+Listings/
+Objects/
+
+# Python
+__pycache__/
+*.pyc
+
+# 其它临时
+*.tmp
+.idea/
+.vscode/
