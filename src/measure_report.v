@@ -121,14 +121,17 @@ module measure_report (
                         if (tx_busy) guard <= 1'b0;
                     end
                     else if (!tx_busy) begin
-                        if (idx == 5'd18) begin          // 19 字节发完
-                            state <= S_WAIT;            // 回等待, 等下一次测量
+                        // 修(09-08): 原实现 idx==18 直接结束 -> '
+' 永远没发, 行尾只有 
+                        if (idx == 5'd19) begin         // 19 字节(含 
+)全部发完
+                            state <= S_WAIT;
                         end
                         else begin
-                            tx_byte <= ch;              // 取当前字符
-                            tx_start <= 1'b1;           // 启动发送
-                            guard  <= 1'b1;             // 进入护栏
-                            idx    <= idx + 5'd1;       // 指向下一个字符
+                            tx_byte <= ch;              // 取当前字符(idx18=default=\n)
+                            tx_start <= 1'b1;
+                            guard  <= 1'b1;
+                            idx    <= idx + 5'd1;
                         end
                     end
                 end

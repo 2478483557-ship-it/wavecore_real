@@ -35,7 +35,7 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 | 5 | 串口协议 | 115200-8N1 双向；上行 F=/S=/A=；下行 0x81 切档/0x85 任意频/0x87 双音（带校验和，帧见 `board/uart_protocol.md`） | 电脑远程切频实测 ✅ |
 | 6 | 波形上传(0x83) | 请求一次上传最近 **1024 点@50kHz**(20.5ms)波形；RAM 用 blk_mem_gen IP(官方姿势, SK-016) | PC 画出 1kHz 正弦 ✅ |
 | 7 | 资源优化 | 大缓存/大表全部走 BRAM(BMG/hann/f_ram/sine) | Utilization: LUT/FF/BRAM 均在限内, 带 ILA 布局通过 |
-| 7 | 未做(彩蛋/波形帧) | 音乐频谱彩蛋(XADC)、波形/幅度谱帧上传、自研 FFT 对比 → 见 `report/task_overview.md` | - |
+| 7 | 未做 | 音乐彩蛋(XADC)、自研 FFT 对比、扫频等 → 见 `report/task_overview.md` | - |
 
 ## Hardware / 硬件平台
 
