@@ -116,19 +116,17 @@ module measure_report (
                             state <= S_SEND;
                         end
                 S_SEND: begin
-                    // 护栏: 看到 uart 进入忙, 才放行下一字节
+                    // 护栏: uart 进入忙后, 才放行下一字节
                     if (guard) begin
                         if (tx_busy) guard <= 1'b0;
                     end
                     else if (!tx_busy) begin
-                        // 修(09-08): 原实现 idx==18 直接结束 -> '
-' 永远没发, 行尾只有 
-                        if (idx == 5'd19) begin         // 19 字节(含 
-)全部发完
-                            state <= S_WAIT;
+                        // 修(09-08): 原来 idx==18 直接结束, 换行符(LF)没发出去
+                        if (idx == 5'd19) begin
+                            state <= S_WAIT;            // 19 字节(含 LF)全部发完
                         end
                         else begin
-                            tx_byte <= ch;              // 取当前字符(idx18=default=\n)
+                            tx_byte <= ch;              // idx18 由 default 分支给 LF
                             tx_start <= 1'b1;
                             guard  <= 1'b1;
                             idx    <= idx + 5'd1;
