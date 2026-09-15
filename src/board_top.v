@@ -19,7 +19,9 @@ module board_top (
     output wire        ad_clk,     // ADC 采样时钟 25MHz (AD9280: D20)
     input  wire [7:0]  ad_data,    // ADC 数据总线      (AD9280: B22~D16)
     output wire        uart_txd,   // 串口发送 (CH340: D17, 115200)
-    input  wire        uart_rxd    // 串口接收 (CH340: E14, 115200, M5 命令)
+    input  wire        uart_rxd,   // 串口接收 (CH340: E14, 115200, M5 命令)
+    output wire        uart_stm32_txd,  // F1 转发口: FPGA->STM32 (P1: N13, LVCMOS33)
+    input  wire        uart_stm32_rxd   // F1 转发口: STM32->FPGA (P1: R14, LVCMOS33)
 );
 
     wire [31:0] fcw;               // 频率控制字(由 freq_ctrl 决定)
@@ -76,11 +78,24 @@ module board_top (
         .rx_done (rx_done   )
     );
 
+    // ---- F1 转发口下行: STM32 也可发命令(与 CH340 合并进同一个解码器) ----
+    wire [7:0] rx2_byte;
+    wire       rx2_done;
+    uart_rx u_rx2 (
+        .clk     (sys_clk      ),
+        .rst_n   (sys_rst_n    ),
+        .rxd     (uart_stm32_rxd),
+        .rx_data (rx2_byte     ),
+        .rx_done (rx2_done     )
+    );
+    wire [7:0] cmd_byte = rx2_done ? rx2_byte : rx_byte;
+    wire       cmd_done = rx_done | rx2_done;
+
     cmd_decoder u_cmd (
         .clk         (sys_clk     ),
         .rst_n       (sys_rst_n   ),
-        .rx_byte     (rx_byte     ),
-        .rx_done     (rx_done     ),
+        .rx_byte     (cmd_byte    ),
+        .rx_done     (cmd_done    ),
         .preset_load (preset_load ),
         .preset_val  (preset_val  ),
         .arb_load    (arb_load    ),
@@ -226,6 +241,14 @@ module board_top (
     );
     // TX 引脚 3 路互斥: 波形 > 谱峰 > 测量
     assign uart_txd = wav_act ? wav_txd : (fft_act ? fft_txd : m_txd);
+
+    // ---- 3.11 F1 转发口: 把整条串口数据流镜像给 STM32 ----
+    uart_mirror u_mirror (
+        .clk     (sys_clk        ),
+        .rst_n   (sys_rst_n      ),
+        .src_txd (uart_txd       ),
+        .dst_txd (uart_stm32_txd )
+    );
 
     // ---- 4. ILA 片上逻辑分析仪(调试观察用) ----
     ila_0 u_ila (

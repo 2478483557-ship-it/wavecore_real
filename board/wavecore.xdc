@@ -46,3 +46,8 @@ set_property -dict {IOSTANDARD LVCMOS33 PACKAGE_PIN D17} [get_ports uart_txd]
 
 # --- UART RX from CH340 (LVCMOS33, B16 bank, M5 commands) ---
 set_property -dict {IOSTANDARD LVCMOS33 PACKAGE_PIN E14} [get_ports uart_rxd]
+
+## ===== F1 ×ª·¢¿Ú: FPGA<->STM32 (2026-09-15) =====
+set_property -dict {PACKAGE_PIN N13 IOSTANDARD LVCMOS33} [get_ports uart_stm32_txd]
+set_property -dict {PACKAGE_PIN R14 IOSTANDARD LVCMOS33} [get_ports uart_stm32_rxd]
+set_property PULLUP true [get_ports uart_stm32_rxd]
