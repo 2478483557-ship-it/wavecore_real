@@ -37,7 +37,10 @@ module board_top (
     wire [7:0]  ad_cap;            // 采集到的 ADC 数据
     wire [23:0] meas_freq;         // 频率计: 测量频率(Hz)
     wire [7:0]  meas_vpp;          // 频率计: 峰峰值
+    wire [15:0] meas_duty;         // 频率计: 占空比(0.1%)
+    wire [19:0] meas_wid;          // 频率计: 脉宽(us)
     wire        meas_done;         // 频率计: 测量完成脉冲
+    wire        meas_done2;        // 频率计: 占空比/脉宽完成脉冲
     wire [7:0]  rx_byte;           // uart_rx 收到的字节
     wire        rx_done;           // uart_rx 收完脉冲
     wire        preset_load;       // 串口切档命令脉冲
@@ -171,24 +174,36 @@ module board_top (
 
     // ---- 3.6 频率计 v2: 自动双模式(闸门/测周), 直接出 Hz ----
     freq_meter u_meter (
-        .clk       (sys_clk    ),
-        .rst_n     (sys_rst_n  ),
-        .ad_cap    (ad_cap     ),
-        .freq_hz   (meas_freq  ),
-        .vpp       (meas_vpp   ),
-        .meas_done (meas_done  )
+        .clk        (sys_clk    ),
+        .rst_n      (sys_rst_n  ),
+        .ad_cap     (ad_cap     ),
+        .freq_hz    (meas_freq  ),
+        .vpp        (meas_vpp   ),
+        .duty_x10   (meas_duty  ),
+        .width_us   (meas_wid   ),
+        .meas_done  (meas_done  ),
+        .meas_done2 (meas_done2 ),
+        .dbg_st     (meter_dbg_st),
+        .dbg_h_tick (meter_h_tick),
+        .dbg_p_tick (meter_p_tick)
     );
 
     // ---- 3.7 测量结果经串口上报: "F=xxxxxxxHz V=xxx" ----
     measure_report u_report (
-        .clk       (sys_clk    ),
-        .rst_n     (sys_rst_n  ),
-        .meas_done (meas_done  ),
-        .freq_hz   (meas_freq  ),
-        .vpp       (meas_vpp   ),
-        .uart_txd  (m_txd      ),
-        .meas_busy (m_busy     ),
-        .ext_hold  (wav_hold   )
+        .clk        (sys_clk    ),
+        .rst_n      (sys_rst_n  ),
+        .meas_done  (meas_done  ),
+        .freq_hz    (meas_freq  ),
+        .vpp        (meas_vpp   ),
+        .meas_done2 (meas_done2 ),
+        .duty_x10   (meas_duty  ),
+        .width_us   (meas_wid   ),
+        .uart_txd   (m_txd      ),
+        .meas_busy  (m_busy     ),
+        .ext_hold   (wav_hold   ),
+        .dbg_fsm    (meas_dbg_fsm),
+        .dbg_h_tick (meter_h_tick),
+        .dbg_p_tick (meter_p_tick)
     );
 
     // ---- 3.8 FFT 频谱演示(B1 已点亮; 输出悬空供后续 B3 频谱显示) ----
@@ -251,11 +266,16 @@ module board_top (
     );
 
     // ---- 4. ILA 片上逻辑分析仪(调试观察用) ----
-    ila_0 u_ila (
-        .clk    (sys_clk  ),
-        .probe0 (da_data  ),
-        .probe1 (rom_addr ),
-        .probe2 (ad_cap   )
-    );
+    // [09-16 临时禁用 ILA: 布局余量不足; 功能验证后可再开]
+    wire [2:0] meter_dbg_st;
+    wire [7:0] meas_dbg_fsm;
+    wire [31:0] meter_h_tick;
+    wire [31:0] meter_p_tick;
+    //ila_0 u_ila (
+    //    .clk    (sys_clk       ),
+    //    .probe0 ({5'b0, meter_dbg_st}),
+    //    .probe1 (meas_dbg_fsm  ),
+    //    .probe2 ({7'b0, wav_hold})
+    //);
 
 endmodule

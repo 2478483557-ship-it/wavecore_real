@@ -1,144 +1,160 @@
 //===========================================================================
-// 模块名   : freq_meter
-// 功能     : 频率计 v2.0 —— 自动双模式测频(P0-2)
-// 设计目标 : 100Hz ~ 1MHz 全频段误差 <1%
-// 两种测法自动切换:
-//   模式A 闸门计数(快) : 10ms 闸门数周期 -> f = cnt x 100
-//        用于 >= 10kHz (10ms 内 >=100 个周期, ±1计数 = ±1%)
-//   模式B 测周法(准)  : 数【32 个完整周期】用了多少个 50MHz 时钟,
-//        f = 32 x 50MHz / clks = 1.6e9 / clks
-//        用于 < 10kHz (32 周期平均, 量化误差 0.001% 级)
-//        clks 由恢复余数除法器(div_restore)算出, 算法已 Python 逐拍验证
-// 迟滞比较 v2.3: 阈值=上一轮波形中心±动态死区(幅度自适应)
-// 输出 : freq_hz(直接 Hz, 供串口显示) + vpp + meas_done
-// 作者 : WaveCore 队长 | 日期: 2026-09-05 | 版本: v2.0
+// 模块名   : freq_meter v4.0
+// 测频     : 自动双模式(10ms闸门 / 32周期测周法), 100Hz~1MHz <1% (不变)
+// 占空比   : 测量窗口内 "高电平时钟数 / 窗口时钟数" (对毛刺免疫)
+// 脉宽     : 窗口内"最长连续高电平"时钟数 / 50 -> us (对毛刺免疫)
+// 判高     : ad_cap > 中线, 且连续 2 拍确认(去毛刺)
+// 作者     : WaveCore 队长 | 日期: 2026-09-16 | 版本: v4.0
 //===========================================================================
 
 module freq_meter #(
-    parameter GATE1_CLKS   = 500_000,    // 粗闸门 10ms @50MHz
-    parameter HYST_L       = 8'd112,     // 迟滞低阈值
-    parameter HYST_H       = 8'd144,     // 迟滞高阈值
-    parameter FINE_CYC     = 6'd32,      // 测周法: 32 个周期取平均
-    parameter [31:0] FINE_NUM = 32'd1_600_000_000  // 32 x 50MHz
+    parameter GATE1_CLKS   = 500_000,
+    parameter HYST_L       = 8'd112,
+    parameter HYST_H       = 8'd144,
+    parameter FINE_CYC     = 6'd32,
+    parameter [31:0] FINE_NUM = 32'd1_600_000_000
 )(
-    input  wire        clk,        // 系统时钟 50MHz
-    input  wire        rst_n,      // 复位, 低有效
-    input  wire [7:0]  ad_cap,     // 采集到的 ADC 数据
-    output reg  [23:0] freq_hz,    // 测量频率(Hz)
-    output reg  [7:0]  vpp,        // 峰峰值
-    output reg         meas_done   // 测量完成脉冲
+    input  wire        clk,
+    input  wire        rst_n,
+    input  wire [7:0]  ad_cap,
+    output reg  [23:0] freq_hz,
+    output reg  [7:0]  vpp,
+    output reg  [15:0] duty_x10,
+    output reg  [19:0] width_us,
+    output reg         meas_done,
+    output reg         meas_done2,
+    output wire [2:0]  dbg_st,
+    output wire [31:0] dbg_h_tick,
+    output wire [31:0] dbg_p_tick
 );
+    assign dbg_st     = st;
+    assign dbg_h_tick = hi_lat;    // 诊断: 高电平计数
+    assign dbg_p_tick = r_lat;     // 诊断: 最长连续高电平
 
     // ============ 状态 ============
-    reg [1:0] st;
-    localparam ST_COARSE = 2'd0;   // 10ms 粗测
-    localparam ST_FINE   = 2'd1;   // 测周法
-    localparam ST_CALC   = 2'd2;   // 等除法器算完
+    reg [2:0] st;
+    localparam ST_COARSE = 3'd0;
+    localparam ST_FINE   = 3'd1;
+    localparam ST_CALC   = 3'd2;
+    localparam ST_D1     = 3'd3;   // 算占空比(减法循环)
+    localparam ST_D2     = 3'd4;   // 算脉宽(减法循环)
 
-    // ============ 通用: 迟滞过零(自适应阈值) ============
+    // ============ 迟滞过零(测频用, 保持不变) ============
     reg        armed;
-    reg [7:0]  thr_l;      // 自适应低阈值(上一轮波形中心 -12)
-    reg [7:0]  thr_h;      // 自适应高阈值(上一轮波形中心 +12)
-    wire [8:0] mid_sum = {1'b0, max_v} + {1'b0, min_v};  // 9位求和防溢出
-    wire [7:0] mid_c   = mid_sum[8:1];                    // (max+min)/2 = 中心
-    // 动态死区 db: 上一轮幅度 Vpp>>4, 夹在 4~12 (幅度大死区宽抗噪, 小则窄保灵敏)
-    reg [7:0]  vpp_last;                     // 上一轮测到的峰峰值
-    wire [7:0] db_half = vpp_last[7:4];      // Vpp/16
+    reg [7:0]  thr_l;
+    reg [7:0]  thr_h;
+    wire [8:0] mid_sum = {1'b0, max_v} + {1'b0, min_v};
+    wire [7:0] mid_c   = mid_sum[8:1];
+    reg [7:0]  vpp_last;
+    wire [7:0] db_half = vpp_last[7:4];
     wire [3:0] db_cur  = (db_half > 4'd12) ? 4'd12 :
                          (db_half < 4'd4)  ? 4'd4  : db_half[3:0];
-    // 阈值 = 中心 ± db_cur (钳到 0~255)
     wire [7:0] next_l = (mid_c > db_cur) ? (mid_c - db_cur) : 8'd0;
     wire [7:0] next_h = (mid_c > (8'd255 - db_cur)) ? 8'd255 : (mid_c + db_cur);
     wire upcross = armed && (ad_cap >= thr_h);
 
-    // ============ 粗测(闸门) ============
-    reg [18:0] gate_cnt;
-    reg [16:0] cnt_gate;           // 粗测周期数(≥100 即快测)
+    // ============ 占空比/脉宽: 计窗统计法 ============
+    wire       hi_now  = (ad_cap > mid_c);
+    reg        hi_prev;
+    wire       hi_ok   = hi_now && hi_prev;      // 连续 2 拍判高
+    reg [31:0] win_cnt;      // 窗口时钟数
+    reg [31:0] high_cnt;     // 高电平时钟数
+    reg [31:0] run_cnt;      // 当前连续高电平长度
+    reg [31:0] max_run;      // 最长连续高电平
+    reg [31:0] hi_lat, r_lat;   // 本帧锁存
+    reg [31:0] win_lat;         // 本帧窗口长度
 
-    // ============ 细测(测周法) ============
-    reg [5:0]  ev_cnt;             // 已数周期(到 32)
-    reg [24:0] t_cnt;              // 计时器(50MHz 时钟数, 25 位: 供除法器取 [24:0])
+    // ============ 粗测/细测 ============
+    reg [18:0] gate_cnt;
+    reg [16:0] cnt_gate;
+    reg [5:0]  ev_cnt;
+    reg [24:0] t_cnt;
     reg        div_start;
     wire       div_done;
     wire [31:0] div_q;
-    reg        t_ok;               // 计时是否在有效范围
-    reg [12:0] wd_cnt;             // ST_CALC 看门狗
-
-    // 除法器: f = FINE_NUM / t_cnt
+    reg        t_ok;
+    reg [12:0] wd_cnt;
+    reg [31:0] div_num;
+    reg [24:0] div_den;
     div_restore #(.N(32), .D(25)) u_div (
-        .clk   (clk       ),
-        .rst_n (rst_n     ),
-        .start (div_start ),
-        .num   (FINE_NUM  ),
-        .den   (t_cnt[24:0]),
-        .q     (div_q     ),
-        .done  (div_done  )
+        .clk(clk), .rst_n(rst_n), .start(div_start),
+        .num(div_num), .den(div_den), .q(div_q), .done(div_done)
     );
 
-    // ============ 峰峰值(跨整个测量过程跟踪) ============
     reg [7:0] max_v, min_v;
-
-    // 显示限幅(串口 F 字段固定 7 位, 最大 9999999)
     wire [23:0] clamp_val = (div_q > 24'd9_999_999) ? 24'd9_999_999 : div_q[23:0];
+
+    // 减法循环用
+    reg [31:0] loop_a;      // 被除数(逐次减)
+    reg [31:0] loop_b;      // 除数
+    reg [15:0] loop_q;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            st         <= ST_COARSE;
-            armed      <= 1'b1;
-            thr_l      <= 8'd112;
-            thr_h      <= 8'd144;
-            gate_cnt   <= 19'd0;
-            cnt_gate   <= 17'd0;
-            ev_cnt     <= 6'd0;
-            t_cnt      <= 24'd0;
-            div_start  <= 1'b0;
-            max_v      <= 8'd0;
-            min_v      <= 8'd255;
-            freq_hz    <= 24'd0;
-            vpp        <= 8'd0;
-            vpp_last   <= 8'd255;
-            meas_done  <= 1'b0;
-            t_ok       <= 1'b0;
-            wd_cnt     <= 13'd0;
+            st <= ST_COARSE; armed <= 1'b1;
+            thr_l <= 8'd112; thr_h <= 8'd144;
+            gate_cnt <= 19'd0; cnt_gate <= 17'd0;
+            ev_cnt <= 6'd0; t_cnt <= 25'd0;
+            div_start <= 1'b0; t_ok <= 1'b0; wd_cnt <= 13'd0;
+            div_num <= 32'd0; div_den <= 25'd0;
+            max_v <= 8'd0; min_v <= 8'd255; vpp_last <= 8'd255;
+            freq_hz <= 24'd0; vpp <= 8'd0;
+            meas_done <= 1'b0; meas_done2 <= 1'b0;
+            hi_prev <= 1'b0; win_cnt <= 32'd0; high_cnt <= 32'd0;
+            run_cnt <= 32'd0; max_run <= 32'd0;
+            hi_lat <= 32'd0; r_lat <= 32'd0; win_lat <= 32'd0;
+            duty_x10 <= 16'd0; width_us <= 20'd0;
+            loop_a <= 32'd0; loop_b <= 32'd0; loop_q <= 16'd0;
         end
         else begin
-            div_start <= 1'b0;
-            meas_done <= 1'b0;
+            div_start  <= 1'b0;
+            meas_done  <= 1'b0;
+            meas_done2 <= 1'b0;
 
-            // 迟滞武装/缴械(阈值自适应: 中心±12)
+            // ---- 数据统计(每个时钟都跑) ----
+            hi_prev <= hi_now;
+            win_cnt <= win_cnt + 32'd1;
+            if (hi_ok) begin
+                high_cnt <= high_cnt + 32'd1;
+                run_cnt  <= run_cnt + 32'd1;
+            end
+            else begin
+                run_cnt <= 32'd0;
+                if (run_cnt > max_run) max_run <= run_cnt;
+            end
+
+            // ---- 测频用迟滞 ----
             if (upcross) armed <= 1'b0;
             else if (ad_cap <= thr_l) armed <= 1'b1;
-
-            // 峰峰值跟踪
             if (ad_cap > max_v) max_v <= ad_cap;
             if (ad_cap < min_v) min_v <= ad_cap;
 
             case (st)
                 ST_COARSE: begin
                     if (gate_cnt == GATE1_CLKS - 1) begin
-                        // 10ms 到点
                         if (cnt_gate >= 17'd100) begin
-                            // >=10kHz: 闸门法直接出结果
                             freq_hz  <= (cnt_gate * 17'd100 > 24'd9_999_999) ?
                                         24'd9_999_999 : (cnt_gate * 17'd100);
                             vpp      <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
-                        vpp_last   <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
+                            vpp_last <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
                             meas_done <= 1'b1;
-                            gate_cnt <= 19'd0;
-                            cnt_gate <= 17'd0;
-                            thr_l      <= next_l;
-                            thr_h      <= next_h;
-                            max_v      <= 8'd0;
-                            min_v    <= 8'd255;
-                            // 留在 ST_COARSE
+                            // 锁存统计 + 清窗
+                            hi_lat <= high_cnt; r_lat <= max_run; win_lat <= win_cnt;
+                            win_cnt <= 32'd0; high_cnt <= 32'd0;
+                            run_cnt <= 32'd0; max_run <= 32'd0;
+                            gate_cnt <= 19'd0; cnt_gate <= 17'd0;
+                            thr_l <= next_l; thr_h <= next_h;
+                            max_v <= 8'd0; min_v <= 8'd255;
+                            wd_cnt <= 13'd0;
+                            st <= ST_D1;
                         end
                         else begin
-                            // <10kHz: 转测周法(细测 32 个周期后由 CALC 出结果)
-                            st       <= ST_FINE;
-                            gate_cnt <= 19'd0;
-                            cnt_gate <= 17'd0;
-                            ev_cnt   <= 6'd0;
-                            t_cnt    <= 24'd0;
+                            // 低频: 重开统计窗(丢弃粗测期数据), 只统计细测 32 周期
+                            st <= ST_FINE; gate_cnt <= 19'd0; cnt_gate <= 17'd0;
+                            ev_cnt <= 6'd0; t_cnt <= 25'd0;
+                            win_cnt <= 32'd0; high_cnt <= 32'd0;
+                            run_cnt <= 32'd0; max_run <= 32'd0;
+                            max_v <= 8'd0; min_v <= 8'd255;
                         end
                     end
                     else begin
@@ -151,69 +167,108 @@ module freq_meter #(
                 ST_FINE: begin
                     if (upcross) begin
                         if (ev_cnt == FINE_CYC - 1) begin
-                            // 数满 32 周期: 判断计时是否有效
                             if ((t_cnt >= 24'd2) && (t_cnt < 25'h1_000000)) begin
-                                t_ok      <= 1'b1;
-                                div_start <= 1'b1;       // 有效 -> 启动除法器
-                                wd_cnt    <= 13'd0;      // 看门狗清零
-                                st        <= ST_CALC;
+                                t_ok <= 1'b1;
+                                div_num <= FINE_NUM; div_den <= t_cnt[24:0];
+                                div_start <= 1'b1; wd_cnt <= 13'd0;
+                                st <= ST_CALC;
                             end
                             else begin
-                                // 无效(计时超限=信号太低 <~95Hz): 报 0
                                 freq_hz  <= 24'd0;
                                 vpp      <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
-                        vpp_last   <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
+                                vpp_last <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
                                 meas_done <= 1'b1;
-                                thr_l      <= next_l;
-                                thr_h      <= next_h;
-                                max_v      <= 8'd0;
-                                min_v    <= 8'd255;
-                                ev_cnt   <= 6'd0;
-                                t_cnt    <= 24'd0;
-                                st       <= ST_COARSE;
+                                hi_lat <= high_cnt; r_lat <= max_run; win_lat <= win_cnt;
+                                win_cnt <= 32'd0; high_cnt <= 32'd0;
+                                run_cnt <= 32'd0; max_run <= 32'd0;
+                                thr_l <= next_l; thr_h <= next_h;
+                                max_v <= 8'd0; min_v <= 8'd255;
+                                ev_cnt <= 6'd0; t_cnt <= 25'd0;
+                                wd_cnt <= 13'd0; st <= ST_D1;
                             end
                         end
-                        else begin
-                            ev_cnt <= ev_cnt + 6'd1;
-                        end
+                        else ev_cnt <= ev_cnt + 6'd1;
                     end
-                    // 计时(防溢出/卡死: 超过 2^24-1 就放弃细测)
-                    if (t_cnt < 24'hFFFFFF) t_cnt <= t_cnt + 24'd1;
+                    if (t_cnt < 24'hFFFFFF) t_cnt <= t_cnt + 25'd1;
                     if (t_cnt == 24'hFFFFFF) begin
-                        freq_hz  <= 24'd0;            // 超时(335ms 没数满32周期): 报 0
-                        vpp      <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
-                        vpp_last   <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
+                        freq_hz <= 24'd0;
+                        vpp     <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
+                        vpp_last<= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
                         meas_done <= 1'b1;
-                        thr_l      <= next_l;
-                        thr_h      <= next_h;
-                        max_v      <= 8'd0;
-                        min_v    <= 8'd255;
-                        ev_cnt   <= 6'd0;
-                        t_cnt    <= 24'd0;
-                        st       <= ST_COARSE;
+                        hi_lat <= high_cnt; r_lat <= max_run; win_lat <= win_cnt;
+                        win_cnt <= 32'd0; high_cnt <= 32'd0;
+                        run_cnt <= 32'd0; max_run <= 32'd0;
+                        thr_l <= next_l; thr_h <= next_h;
+                        max_v <= 8'd0; min_v <= 8'd255;
+                        ev_cnt <= 6'd0; t_cnt <= 25'd0;
+                        wd_cnt <= 13'd0; st <= ST_D1;
                     end
                 end
 
                 ST_CALC: begin
-                    // 看门狗: 防除法器异常导致永久卡死(正常 32 拍就出结果)
                     wd_cnt <= wd_cnt + 13'd1;
                     if (div_done || wd_cnt == 13'd4095) begin
-                        freq_hz  <= div_done ? (t_ok ? clamp_val : 24'd0)
-                                             : 24'd0;              // 除法器异常兜底 0
-                        vpp      <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
-                        vpp_last   <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
+                        freq_hz <= div_done ? (t_ok ? clamp_val : 24'd0) : 24'd0;
+                        vpp     <= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
+                        vpp_last<= (max_v >= min_v) ? (max_v - min_v) : 8'd0;
                         meas_done <= 1'b1;
-                        thr_l      <= next_l;
-                        thr_h      <= next_h;
-                        max_v      <= 8'd0;
-                        min_v    <= 8'd255;
-                        wd_cnt   <= 13'd0;
-                        st       <= ST_COARSE;
+                        hi_lat <= high_cnt; r_lat <= max_run; win_lat <= win_cnt;
+                        win_cnt <= 32'd0; high_cnt <= 32'd0;
+                        run_cnt <= 32'd0; max_run <= 32'd0;
+                        thr_l <= next_l; thr_h <= next_h;
+                        max_v <= 8'd0; min_v <= 8'd255;
+                        wd_cnt <= 13'd0; st <= ST_D1;
+                    end
+                end
+
+                ST_D1: begin
+                    // duty_x10 = hi_lat * 1000 / win_lat (减法循环, <=1001 拍)
+                    if (wd_cnt == 13'd0) begin
+                        // duty = hi/win; 先各右移6位再算, 防 hi*1000 溢出
+                        loop_a <= (hi_lat >> 6) * 32'd1000;
+                        loop_b <= ((win_lat >> 6) != 0) ? (win_lat >> 6) : 32'd1;
+                        loop_q <= 16'd0;
+                        wd_cnt <= 13'd1;
+                    end
+                    else begin
+                        wd_cnt <= wd_cnt + 13'd1;
+                        if (loop_a < loop_b || wd_cnt == 13'd4095) begin
+                            duty_x10 <= loop_q;
+                            wd_cnt   <= 13'd0;
+                            st       <= ST_D2;
+                        end
+                        else begin
+                            loop_a <= loop_a - loop_b;
+                            loop_q <= loop_q + 16'd1;
+                        end
+                    end
+                end
+
+                ST_D2: begin
+                    // width_us = r_lat / 50 (减法循环, 上限保护)
+                    if (wd_cnt == 13'd0) begin
+                        loop_a <= (r_lat > 32'd5_000_000) ? 32'd5_000_000 : r_lat;
+                        loop_q <= 16'd0;
+                        wd_cnt <= 13'd1;
+                    end
+                    else begin
+                        wd_cnt <= wd_cnt + 13'd1;
+                        if (loop_a < 32'd50 || wd_cnt == 13'd4095) begin
+                            width_us   <= (r_lat > 32'd5_000_000) ? 20'd99_999 : loop_q;
+                            meas_done2 <= 1'b1;
+                            wd_cnt     <= 13'd0;
+                            st         <= ST_COARSE;
+                        end
+                        else begin
+                            loop_a <= loop_a - 32'd50;
+                            loop_q <= loop_q + 16'd1;
+                        end
                     end
                 end
                 default: st <= ST_COARSE;
             endcase
         end
     end
+
 
 endmodule

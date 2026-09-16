@@ -1,32 +1,30 @@
 //===========================================================================
-// 模块名   : measure_report
-// 功能     : 每次测量结束, 通过串口上报一行结果(M4b/P0-2)
-// 上报格式 : 固定宽度, 方便电脑解析:
-//            "F=0100000Hz V=255\r\n"
-//            7 位频率(Hz) + 3 位 Vpp, 前导补 0
-// v1.1 变化 : freq_meter 现在直接输出 Hz(freq_hz), 不再乘 100
-// 波特率   : 115200, 8N1
-// 作者     : WaveCore 队长 | 日期: 2026-09-05 | 版本: v1.1
+// 模块名   : measure_report v3.2 (正式版)
+// 输出     : "F=0100000Hz V=255\r\n" + "D=050.0% W=00500us\r\n" (39字节连发)
+// 说明     : duty/width 来自 freq_meter v4.0 计窗统计法(对毛刺免疫)
+// 作者     : WaveCore 队长 | 日期: 2026-09-16 | 版本: v3.2
 //===========================================================================
 
 module measure_report (
-    input  wire        clk,        // 系统时钟 50MHz
-    input  wire        rst_n,      // 复位, 低有效
-    input  wire        meas_done,  // freq_meter 测量完成脉冲
-    input  wire [23:0] freq_hz,    // 测量频率(Hz, 直接来自 freq_meter)
-    input  wire [7:0]  vpp,        // 峰峰值
-    output wire        uart_txd,   // 串口发送脚 (CH340, 达芬奇Pro: D17)
-    output wire        meas_busy,  // 1=正在发送(供 fft_report/wave 避让用)
-    input  wire        ext_hold    // 1=波形帧占用 TX, 本行暂停开新行(波形上传 F2)
+    input  wire        clk,
+    input  wire        rst_n,
+    input  wire        meas_done,
+    input  wire [23:0] freq_hz,
+    input  wire [7:0]  vpp,
+    input  wire        meas_done2,
+    input  wire [15:0] duty_x10,
+    input  wire [19:0] width_us,
+    output wire        uart_txd,
+    output wire        meas_busy,
+    input  wire        ext_hold,
+    output wire [7:0]  dbg_fsm,
+    input  wire [31:0] dbg_h_tick,
+    input  wire [31:0] dbg_p_tick
 );
 
-    //================ BCD 转换 ================
-    wire [27:0] freq_bcd;
-    wire        freq_done;
-    reg         freq_start;
-    wire [11:0] vpp_bcd;
-    wire        vpp_done;
-    reg         vpp_start;
+    //================ 频率/Vpp BCD ================
+    wire [27:0] freq_bcd;   wire freq_done;   reg freq_start;
+    wire [11:0] vpp_bcd;    wire vpp_done;    reg vpp_start;
 
     bin2bcd #(.IN_W(24), .OUT_W(28)) u_b2f (
         .clk(clk), .rst_n(rst_n), .start(freq_start),
@@ -35,9 +33,29 @@ module measure_report (
         .clk(clk), .rst_n(rst_n), .start(vpp_start),
         .bin({8'd0, vpp}), .bcd(vpp_bcd), .done(vpp_done) );
 
-    // 取 28bit BCD 里第 idx 组(4bit)的十进制值(0~9)
-    function [3:0] d10(input [27:0] v, input [3:0] idx);
-        d10 = v[idx*4 +: 4];
+    //================ 锁存 ================
+    reg [15:0] duty_s;
+    reg [19:0] width_s;
+
+    function [3:0] fd10(input [27:0] v, input [3:0] idx);
+        fd10 = v[idx*4 +: 4];
+    endfunction
+    function [3:0] dg_d(input [15:0] v, input [1:0] pos);
+        case (pos)
+            2'd3: dg_d = (v >= 16'd1000) ? 4'd1 : 4'd0;
+            2'd2: dg_d = (v / 16'd100) % 16'd10;
+            2'd1: dg_d = (v / 16'd10) % 16'd10;
+            default: dg_d = v % 16'd10;
+        endcase
+    endfunction
+    function [3:0] dg_w(input [19:0] v, input [2:0] pos);
+        case (pos)
+            3'd4: dg_w = (v / 20'd10000);
+            3'd3: dg_w = (v / 20'd1000) % 20'd10;
+            3'd2: dg_w = (v / 20'd100) % 20'd10;
+            3'd1: dg_w = (v / 20'd10) % 20'd10;
+            default: dg_w = v % 20'd10;
+        endcase
     endfunction
 
     //================ 串口 ================
@@ -48,54 +66,79 @@ module measure_report (
                     .tx_start(tx_start), .tx_busy(tx_busy), .txd(uart_txd));
     assign meas_busy = tx_busy;
 
-    //================ 发送状态机 ================
-    reg [2:0] state;
-    reg [4:0] idx;          // 报文第几个字节(0~18)
-    reg       guard;        // 防重复启动护栏
+    //================ 39 字节字符表 ================
+    reg [5:0] idx;
     wire [7:0] ch = char_at(idx);
-
-    function [7:0] char_at(input [4:0] i);
+    function [7:0] char_at(input [5:0] i);
         case (i)
-            5'd0:  char_at = 8'h46;                             // 'F'
-            5'd1:  char_at = 8'h3D;                             // '='
-            5'd2:  char_at = 8'd48 + d10(freq_bcd, 3'd6);       // 频率最高位(百万位)
-            5'd3:  char_at = 8'd48 + d10(freq_bcd, 3'd5);
-            5'd4:  char_at = 8'd48 + d10(freq_bcd, 3'd4);
-            5'd5:  char_at = 8'd48 + d10(freq_bcd, 3'd3);
-            5'd6:  char_at = 8'd48 + d10(freq_bcd, 3'd2);
-            5'd7:  char_at = 8'd48 + d10(freq_bcd, 3'd1);
-            5'd8:  char_at = 8'd48 + d10(freq_bcd, 3'd0);       // 频率最低位
-            5'd9:  char_at = 8'h48;                             // 'H'
-            5'd10: char_at = 8'h7A;                             // 'z'
-            5'd11: char_at = 8'h20;                             // ' '
-            5'd12: char_at = 8'h56;                             // 'V'
-            5'd13: char_at = 8'h3D;                             // '='
-            5'd14: char_at = 8'd48 + d10({16'd0, vpp_bcd}, 3'd2);
-            5'd15: char_at = 8'd48 + d10({16'd0, vpp_bcd}, 3'd1);
-            5'd16: char_at = 8'd48 + d10({16'd0, vpp_bcd}, 3'd0);
-            5'd17: char_at = 8'h0D;                             // '\r'
-            default: char_at = 8'h0A;                           // 5'd18 '\n'
+            6'd0:  char_at = 8'h46;
+            6'd1:  char_at = 8'h3D;
+            6'd2:  char_at = 8'd48 + fd10(freq_bcd, 3'd6);
+            6'd3:  char_at = 8'd48 + fd10(freq_bcd, 3'd5);
+            6'd4:  char_at = 8'd48 + fd10(freq_bcd, 3'd4);
+            6'd5:  char_at = 8'd48 + fd10(freq_bcd, 3'd3);
+            6'd6:  char_at = 8'd48 + fd10(freq_bcd, 3'd2);
+            6'd7:  char_at = 8'd48 + fd10(freq_bcd, 3'd1);
+            6'd8:  char_at = 8'd48 + fd10(freq_bcd, 3'd0);
+            6'd9:  char_at = 8'h48;
+            6'd10: char_at = 8'h7A;
+            6'd11: char_at = 8'h20;
+            6'd12: char_at = 8'h56;
+            6'd13: char_at = 8'h3D;
+            6'd14: char_at = 8'd48 + fd10({16'd0, vpp_bcd}, 3'd2);
+            6'd15: char_at = 8'd48 + fd10({16'd0, vpp_bcd}, 3'd1);
+            6'd16: char_at = 8'd48 + fd10({16'd0, vpp_bcd}, 3'd0);
+            6'd17: char_at = 8'h0D;
+            6'd18: char_at = 8'h0A;
+            6'd19: char_at = 8'h44;                        // 'D'
+            6'd20: char_at = 8'h3D;                        // '='
+            6'd21: char_at = 8'd48 + dg_d(duty_s, 2'd3);
+            6'd22: char_at = 8'd48 + dg_d(duty_s, 2'd2);
+            6'd23: char_at = 8'd48 + dg_d(duty_s, 2'd1);
+            6'd24: char_at = 8'h2E;                        // '.'
+            6'd25: char_at = 8'd48 + dg_d(duty_s, 2'd0);
+            6'd26: char_at = 8'h25;                        // '%'
+            6'd27: char_at = 8'h20;
+            6'd28: char_at = 8'h57;                        // 'W'
+            6'd29: char_at = 8'h3D;                        // '='
+            6'd30: char_at = 8'd48 + dg_w(width_s, 3'd4);
+            6'd31: char_at = 8'd48 + dg_w(width_s, 3'd3);
+            6'd32: char_at = 8'd48 + dg_w(width_s, 3'd2);
+            6'd33: char_at = 8'd48 + dg_w(width_s, 3'd1);
+            6'd34: char_at = 8'd48 + dg_w(width_s, 3'd0);
+            6'd35: char_at = 8'h75;                        // 'u'
+            6'd36: char_at = 8'h73;                        // 's'
+            6'd37: char_at = 8'h0D;
+            default: char_at = 8'h0A;                      // 38 LF
         endcase
     endfunction
 
+    //================ 状态机 ================
     localparam S_WAIT = 3'd0;
-    localparam S_CF   = 3'd1;   // 启动频率 BCD
-    localparam S_WF   = 3'd2;   // 等频率 BCD
-    localparam S_CV   = 3'd3;   // 启动 Vpp BCD
-    localparam S_WV   = 3'd4;   // 等 Vpp BCD
-    localparam S_SEND = 3'd5;   // 逐字节发送
+    localparam S_CF   = 3'd1;
+    localparam S_WF   = 3'd2;
+    localparam S_CV   = 3'd3;
+    localparam S_WV   = 3'd4;
+    localparam S_SEND = 3'd5;
+
+    reg [2:0] state;
+    reg       guard;
+
+    assign dbg_fsm = {state, idx[4:0]};
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state  <= S_WAIT;
+            state      <= S_WAIT;
             freq_start <= 1'b0;
             vpp_start  <= 1'b0;
             tx_start   <= 1'b0;
-            idx    <= 5'd0;
-            guard  <= 1'b0;
+            idx        <= 6'd0;
+            guard      <= 1'b0;
+            duty_s     <= 16'd0;
+            width_s    <= 20'd0;
         end
         else begin
-            tx_start   <= 1'b0;     // 脉冲默认清 0
+            tx_start   <= 1'b0;
             freq_start <= 1'b0;
             vpp_start  <= 1'b0;
 
@@ -111,25 +154,25 @@ module measure_report (
                         end
                 S_CV:   state <= S_WV;
                 S_WV:   if (vpp_done) begin
-                            idx   <= 5'd0;
+                            duty_s  <= duty_x10;
+                            width_s <= width_us;
+                            idx   <= 6'd0;
                             guard <= 1'b0;
                             state <= S_SEND;
                         end
                 S_SEND: begin
-                    // 护栏: uart 进入忙后, 才放行下一字节
                     if (guard) begin
                         if (tx_busy) guard <= 1'b0;
                     end
                     else if (!tx_busy) begin
-                        // 修(09-08): 原来 idx==18 直接结束, 换行符(LF)没发出去
-                        if (idx == 5'd19) begin
-                            state <= S_WAIT;            // 19 字节(含 LF)全部发完
+                        if (idx == 6'd39) begin
+                            state <= S_WAIT;
                         end
                         else begin
-                            tx_byte <= ch;              // idx18 由 default 分支给 LF
+                            tx_byte  <= ch;
                             tx_start <= 1'b1;
-                            guard  <= 1'b1;
-                            idx    <= idx + 5'd1;
+                            guard    <= 1'b1;
+                            idx      <= idx + 6'd1;
                         end
                     end
                 end
