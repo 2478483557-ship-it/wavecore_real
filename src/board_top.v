@@ -105,7 +105,9 @@ module board_top (
         .arb_fcw     (arb_fcw     ),
         .dual_load   (dual_load   ),
         .dual_fcw    (dual_fcw    ),
-        .wave_req    (wave_req_w  )
+        .wave_req    (wave_req_w  ),
+        .wave_sel    (wave_sel_w  ),
+        .trig_mode   (trig_mode_w )
     );
 
     // ---- 0.8 双音模式控制(0x87 开双音, 任何单音设定自动回单音) ----
@@ -152,8 +154,15 @@ module board_top (
         .addr (rom_addr2 ),
         .dout (sine2     )
     );
-    // 双音合成: 两路平均, 防溢出(各减直流再平均? 直接平均即可, 中心都~128)
-    assign sine_out = dual_on ? {1'b0, sine[7:1]} + {1'b0, sine2[7:1]} : sine;
+    // ---- 2.7 波形选择(F5, 0x88): 0=正弦 1=方波 2=三角 ----
+    wire [7:0] tri_a = {1'b0, (rom_addr[7]  ? (8'd255 - rom_addr[7:0])  : rom_addr[7:0])}  << 1;
+    wire [7:0] tri_b = {1'b0, (rom_addr2[7] ? (8'd255 - rom_addr2[7:0]) : rom_addr2[7:0])} << 1;
+    wire [7:0] wave_a = (wave_sel_w == 2'd1) ? (rom_addr[7]  ? 8'd26 : 8'd230) :   // 方波
+                        (wave_sel_w == 2'd2) ? tri_a : sine;
+    wire [7:0] wave_b = (wave_sel_w == 2'd1) ? (rom_addr2[7] ? 8'd26 : 8'd230) :
+                        (wave_sel_w == 2'd2) ? tri_b : sine2;
+    // 双音合成(对整形后的波形)
+    assign sine_out = dual_on ? {1'b0, wave_a[7:1]} + {1'b0, wave_b[7:1]} : wave_a;
 
     // ---- 3. DAC 接口(时序对齐后送出) ----
     da_send u_da (
@@ -240,6 +249,8 @@ module board_top (
     );
     // ---- 3.10 波形帧上传(F2-A): 0x83 请求 -> 传 1024 点(50kHz) ----
     wire        wave_req_w;    // 0x83 请求
+    wire [1:0]  wave_sel_w;    // 0x88 波形选择
+    wire [1:0]  trig_mode_w;   // 0x89 触发模式
     wire        wav_txd;       // 波形 TX
     wire        wav_act;       // 波形占用标志
     wire        wav_hold;      // 让测量/谱峰暂停
@@ -248,6 +259,7 @@ module board_top (
         .rst_n      (sys_rst_n ),
         .ad_cap     (ad_cap    ),
         .req        (wave_req_w),
+        .trig_mode  (trig_mode_w),
         .meas_busy  (m_busy    ),
         .fft_busy   (fft_act   ),
         .uart_txd   (wav_txd   ),

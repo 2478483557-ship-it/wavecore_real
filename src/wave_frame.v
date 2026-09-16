@@ -14,6 +14,7 @@ module wave_frame (
     input  wire        rst_n,
     input  wire [7:0]  ad_cap,
     input  wire        req,
+    input  wire [1:0]  trig_mode,   // 0x89: 0=自由 1=上升沿 2=下降沿
     input  wire        meas_busy,
     input  wire        fft_busy,
     output wire        uart_txd,
@@ -82,6 +83,17 @@ module wave_frame (
     reg [9:0]  pidx;
     reg [7:0]  sum;
 
+    // ---- 触发检测(120/136 迟滞) ----
+    reg [7:0] prev_ad;
+    wire rise_det = (ad_cap >= 8'd136) && (prev_ad <= 8'd120);
+    wire fall_det = (ad_cap <= 8'd120) && (prev_ad >= 8'd136);
+    wire trig_ok  = (trig_mode == 2'd0) ? 1'b1 :
+                    (trig_mode == 2'd1) ? rise_det : fall_det;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) prev_ad <= 8'd128;
+        else        prev_ad <= ad_cap;
+    end
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             st       <= ST_IDLE;
@@ -103,7 +115,7 @@ module wave_frame (
             case (st)
                 ST_IDLE: if (req_l) st <= ST_HOLD;
                 ST_HOLD: begin
-                    if (!meas_busy && !fft_busy) begin
+                    if (!meas_busy && !fft_busy && trig_ok) begin   // 等总线+等触发
                         wav_act_r <= 1'b1;
                         cptr  <= wr_idx;       // 快照(下一帧起点=最旧点)
                         addra_s <= wr_idx;     // 指向首点(组合读 douta)
