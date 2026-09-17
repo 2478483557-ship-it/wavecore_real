@@ -39,10 +39,29 @@ module freq_meter #(
     localparam ST_D1     = 3'd3;   // 算占空比(减法循环)
     localparam ST_D2     = 3'd4;   // 算脉宽(减法循环)
 
-    // ============ [09-17] 3点中值滤波: 抑制单点尖刺 ============
-    reg  [7:0] ad_p1, ad_p2;                     // 历史采样
-    wire [7:0] ad_med = ( (ad_cap<ad_p1) ? ((ad_p1<ad_p2)?ad_p1:((ad_cap<ad_p2)?ad_p2:ad_cap))
-                                        : ((ad_cap<ad_p2)?ad_cap:((ad_p1<ad_p2)?ad_p2:ad_p1)) );
+    // ============ [09-17] 5点中值滤波: 抑制宽至2拍的尖刺 ============
+    // 9 比较器排序网络, Python 20万组随机验证 (hw_analysis/med5_net.txt)
+    reg  [7:0] ad_p1, ad_p2, ad_p3, ad_p4;
+    wire [7:0] a0 = ad_cap, a1 = ad_p1, a2 = ad_p2, a3 = ad_p3, a4 = ad_p4;
+    wire [7:0] c0_lo = (a0 < a1) ? a0 : a1;
+    wire [7:0] c0_hi = (a0 < a1) ? a1 : a0;
+    wire [7:0] c1_lo = (a3 < a4) ? a3 : a4;
+    wire [7:0] c1_hi = (a3 < a4) ? a4 : a3;
+    wire [7:0] c2_lo = (a2 < c1_hi) ? a2 : c1_hi;
+    wire [7:0] c2_hi = (a2 < c1_hi) ? c1_hi : a2;
+    wire [7:0] c3_lo = (c2_lo < c1_lo) ? c2_lo : c1_lo;
+    wire [7:0] c3_hi = (c2_lo < c1_lo) ? c1_lo : c2_lo;
+    wire [7:0] c4_lo = (c0_lo < c3_hi) ? c0_lo : c3_hi;
+    wire [7:0] c4_hi = (c0_lo < c3_hi) ? c3_hi : c0_lo;
+    wire [7:0] c5_lo = (c4_lo < c3_lo) ? c4_lo : c3_lo;
+    wire [7:0] c5_hi = (c4_lo < c3_lo) ? c3_lo : c4_lo;
+    wire [7:0] c6_lo = (c0_hi < c2_hi) ? c0_hi : c2_hi;
+    wire [7:0] c6_hi = (c0_hi < c2_hi) ? c2_hi : c0_hi;
+    wire [7:0] c7_lo = (c6_lo < c4_hi) ? c6_lo : c4_hi;
+    wire [7:0] c7_hi = (c6_lo < c4_hi) ? c4_hi : c6_lo;
+    wire [7:0] c8_lo = (c7_lo < c5_hi) ? c7_lo : c5_hi;
+    wire [7:0] c8_hi = (c7_lo < c5_hi) ? c5_hi : c7_lo;
+    wire [7:0] ad_med = c8_hi;                   // 中值输出
 
     // ============ 迟滞过零(测频用, 保持不变) ============
     reg        armed;
@@ -119,7 +138,7 @@ module freq_meter #(
             meas_done <= 1'b0; meas_done2 <= 1'b0;
             hi_prev <= 1'b0; hi_prev_q <= 1'b0; lo_prev_q <= 1'b0;
             hi_flag <= 1'b0;
-            ad_p1 <= 8'd128; ad_p2 <= 8'd128;
+            ad_p1 <= 8'd128; ad_p2 <= 8'd128; ad_p3 <= 8'd128; ad_p4 <= 8'd128;
             win_cnt <= 32'd0; high_cnt <= 32'd0;
             run_cnt <= 32'd0; max_run <= 32'd0;
             hi_lat <= 32'd0; r_lat <= 32'd0; win_lat <= 32'd0;
@@ -131,9 +150,11 @@ module freq_meter #(
             meas_done  <= 1'b0;
             meas_done2 <= 1'b0;
 
-            // ---- 中值滤波移位 ----
+            // ---- 中值滤波移位(5抽头) ----
             ad_p1 <= ad_cap;
             ad_p2 <= ad_p1;
+            ad_p3 <= ad_p2;
+            ad_p4 <= ad_p3;
             // ---- 数据统计(每个时钟都跑) ----
             if (hi_set)      hi_flag <= 1'b1;
             else if (hi_clr) hi_flag <= 1'b0;
