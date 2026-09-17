@@ -170,26 +170,32 @@ module fft_demo #(
             fft_done2 <= 1'b0;
 
             if (m_data_tvalid) begin
-                // 主峰: 全部有效 bin 中最大(跳过 DC 0 与镜像后半段)
+                // [09-17 终极修复] 相隔感知的流式双峰(单趟 top-2):
+                //   a) 新主峰出现时, 旧主峰仅当与新主峰相隔>2 才降级为第二峰
+                //      (否则丢弃: 典型是 Hann 主瓣旁瓣换位, 相似bin不构成"双峰")
+                //   b) 常规候选同样要求与当前主峰相隔>2
+                //   彻底规避: 主峰晚一拍把自己当候选 / 旁瓣(0.5)顶掉谐波(0.33)
                 if (bin_cnt != 14'd0 && bin_cnt <= 14'd2047) begin
                     if (mag > peak_mag) begin
-                        peak_mag <= mag;
+                        if (peak_bin != 14'd0 &&
+                            (peak_bin > bin_cnt + 14'd2 || bin_cnt > peak_bin + 14'd2)) begin
+                            sec_mag <= peak_mag;   // 旧主峰降级(须相隔>2)
+                            sec_bin <= peak_bin;
+                        end
+                        peak_mag <= mag;           // 新主峰
                         peak_bin <= bin_cnt;
                     end
-                end
-                // 第二峰候选: 与"当前主峰"相隔>2 的 bin 里取最大
-                if (bin_cnt >= 14'd1 && bin_cnt <= 14'd2047) begin
-                    if ((bin_cnt > peak_bin + 14'd2 || bin_cnt + 14'd2 < peak_bin) &&
-                        mag > sec_mag) begin
-                        sec_mag <= mag;
+                    else if (mag > sec_mag &&
+                        (bin_cnt > peak_bin + 14'd2 || bin_cnt + 14'd2 < peak_bin)) begin
+                        sec_mag <= mag;            // 常规第二峰(须相隔>2)
                         sec_bin <= bin_cnt;
                     end
                 end
                 if (m_data_tlast) begin
                     fft_hz  <= ((peak_bin * 16'd50000) + 12'd2048) >> 12;
                     fft_done <= 1'b1;
-                    // 第二峰门限: 幅度≥主峰一半 且 相隔>2
-                    if (sec_bin != 14'd0 && sec_mag >= {1'b0, peak_mag[17:1]} &&
+                    // 第二峰门限: 幅度≥主峰1/8 且 相隔>2 (方波3次谐波≈1/3~1/4 稳定通过)
+                    if (sec_bin != 14'd0 && sec_mag >= {3'b0, peak_mag[17:3]} &&
                         (sec_bin > peak_bin + 14'd2 || sec_bin + 14'd2 < peak_bin)) begin
                         fft_hz2  <= ((sec_bin * 16'd50000) + 12'd2048) >> 12;
                         fft_done2 <= 1'b1;
