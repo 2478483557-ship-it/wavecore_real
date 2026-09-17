@@ -39,6 +39,11 @@ module freq_meter #(
     localparam ST_D1     = 3'd3;   // 算占空比(减法循环)
     localparam ST_D2     = 3'd4;   // 算脉宽(减法循环)
 
+    // ============ [09-17] 3点中值滤波: 抑制单点尖刺 ============
+    reg  [7:0] ad_p1, ad_p2;                     // 历史采样
+    wire [7:0] ad_med = ( (ad_cap<ad_p1) ? ((ad_p1<ad_p2)?ad_p1:((ad_cap<ad_p2)?ad_p2:ad_cap))
+                                        : ((ad_cap<ad_p2)?ad_cap:((ad_p1<ad_p2)?ad_p2:ad_p1)) );
+
     // ============ 迟滞过零(测频用, 保持不变) ============
     reg        armed;
     reg [7:0]  thr_l;
@@ -51,12 +56,24 @@ module freq_meter #(
                          (db_half < 4'd4)  ? 4'd4  : db_half[3:0];
     wire [7:0] next_l = (mid_c > db_cur) ? (mid_c - db_cur) : 8'd0;
     wire [7:0] next_h = (mid_c > (8'd255 - db_cur)) ? 8'd255 : (mid_c + db_cur);
-    wire upcross = armed && (ad_cap >= thr_h);
+    // [09-17 抗噪] 阈值穿越需"连续2拍"确认: 单点毛刺不再触发过零
+    reg  hi_prev_q;
+    reg  lo_prev_q;
+    wire hi_now_q = (ad_med >= thr_h);
+    wire lo_now_q = (ad_med <= thr_l);
+    wire hi2_ok   = hi_now_q && hi_prev_q;    // 连续2拍高
+    wire lo2_ok   = lo_now_q && lo_prev_q;    // 连续2拍低(重新武装也要2拍)
+    wire upcross  = armed && hi2_ok;
 
     // ============ 占空比/脉宽: 计窗统计法 ============
-    wire       hi_now  = (ad_cap > mid_c);
+    // [09-17] 判高改为施密特迟滞: 高于 mid+db 置位, 低于 mid-db 清零
+    //         带内的小毛刺/振铃不再把高电平时段"切碎"
+    reg        hi_flag;
+    wire       hi_set  = (ad_med >= next_h);
+    wire       hi_clr  = (ad_med <= next_l);
+    wire       hi_now  = (ad_med > mid_c);       // (保留观察用)
     reg        hi_prev;
-    wire       hi_ok   = hi_now && hi_prev;      // 连续 2 拍判高
+    wire       hi_ok   = hi_flag;                // 统计用判高
     reg [31:0] win_cnt;      // 窗口时钟数
     reg [31:0] high_cnt;     // 高电平时钟数
     reg [31:0] run_cnt;      // 当前连续高电平长度
@@ -100,7 +117,10 @@ module freq_meter #(
             max_v <= 8'd0; min_v <= 8'd255; vpp_last <= 8'd255;
             freq_hz <= 24'd0; vpp <= 8'd0;
             meas_done <= 1'b0; meas_done2 <= 1'b0;
-            hi_prev <= 1'b0; win_cnt <= 32'd0; high_cnt <= 32'd0;
+            hi_prev <= 1'b0; hi_prev_q <= 1'b0; lo_prev_q <= 1'b0;
+            hi_flag <= 1'b0;
+            ad_p1 <= 8'd128; ad_p2 <= 8'd128;
+            win_cnt <= 32'd0; high_cnt <= 32'd0;
             run_cnt <= 32'd0; max_run <= 32'd0;
             hi_lat <= 32'd0; r_lat <= 32'd0; win_lat <= 32'd0;
             duty_x10 <= 16'd0; width_us <= 20'd0;
@@ -111,8 +131,15 @@ module freq_meter #(
             meas_done  <= 1'b0;
             meas_done2 <= 1'b0;
 
+            // ---- 中值滤波移位 ----
+            ad_p1 <= ad_cap;
+            ad_p2 <= ad_p1;
             // ---- 数据统计(每个时钟都跑) ----
+            if (hi_set)      hi_flag <= 1'b1;
+            else if (hi_clr) hi_flag <= 1'b0;
             hi_prev <= hi_now;
+            hi_prev_q <= hi_now_q;
+            lo_prev_q <= lo_now_q;
             win_cnt <= win_cnt + 32'd1;
             if (hi_ok) begin
                 high_cnt <= high_cnt + 32'd1;
@@ -125,9 +152,9 @@ module freq_meter #(
 
             // ---- 测频用迟滞 ----
             if (upcross) armed <= 1'b0;
-            else if (ad_cap <= thr_l) armed <= 1'b1;
-            if (ad_cap > max_v) max_v <= ad_cap;
-            if (ad_cap < min_v) min_v <= ad_cap;
+            else if (lo2_ok) armed <= 1'b1;
+            if (ad_med > max_v) max_v <= ad_med;
+            if (ad_med < min_v) min_v <= ad_med;
 
             case (st)
                 ST_COARSE: begin

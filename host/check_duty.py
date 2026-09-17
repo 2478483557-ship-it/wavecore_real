@@ -8,13 +8,14 @@ import sys, time
 import serial
 
 COM = sys.argv[1] if len(sys.argv) > 1 else "COM3"
+BAUD = int(sys.argv[2]) if len(sys.argv) > 2 else 460800   # 默认460800, 可传参: python x.py COM5 115200
 CMD = bytes([0x5A, 0xA5, 0x83, 0x00, 0x01, 0x00, 0x84])
 HEAD = bytes([0x5A, 0xA5, 0x01])
 FS = 50_000  # 50kHz
 
 
 def main():
-    ser = serial.Serial(COM, 115200, timeout=1)
+    ser = serial.Serial(COM, BAUD, timeout=1)
     ser.reset_input_buffer()
     ser.write(CMD)
     buf = bytearray()
@@ -47,6 +48,8 @@ def main():
     rh = longest(high, 1)
     rl = longest(high, 0)
     print(f"点数={len(s)} min={lo} max={hi} 中线={mid}")
+    print(f"前6点 = {s[:6]}   （上升沿触发时应以高电平开头）")
+    print(f"后6点 = {s[-6:]}")
     print(f"duty = {duty:.1f} %")
     print(f"最长高电平 = {rh} 点 = {rh/FS*1e6:.0f} us")
     print(f"最长低电平 = {rl} 点 = {rl/FS*1e6:.0f} us")

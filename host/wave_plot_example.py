@@ -9,7 +9,8 @@ import time
 import os
 import sys
 
-COM = sys.argv[1] if len(sys.argv) > 1 else "COM3"   # 用法: python wave_plot_example.py COM5
+COM = sys.argv[1] if len(sys.argv) > 1 else "COM3"
+BAUD = int(sys.argv[2]) if len(sys.argv) > 2 else 460800   # 默认460800, 可传参: python x.py COM5 115200   # 用法: python wave_plot_example.py COM5
 CMD = bytes([0x5A, 0xA5, 0x83, 0x00, 0x01, 0x00, 0x84])   # 请求波形
 HEAD = bytes([0x5A, 0xA5, 0x01])
 
@@ -38,7 +39,7 @@ def try_once(ser, label):
 
 def main():
     print("[1] 打开串口", COM, "...")
-    ser = serial.Serial(COM, 115200, timeout=1)
+    ser = serial.Serial(COM, BAUD, timeout=1)
     for k in range(1, 4):
         print(f"[2] 第 {k} 次发送请求波形 0x83 ...")
         frame, ok = try_once(ser, k)

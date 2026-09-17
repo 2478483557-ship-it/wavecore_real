@@ -21,7 +21,7 @@ def send_freq(ser, hz, cmd=0x85):
     ser.write(frame)
 
 
-def main(port: str = "COM3", baud: int = 115200):
+def main(port: str = "COM3", baud: int = 460800):
     ser = serial.Serial(port, baud, timeout=1)
     print(f"已连接 {port} @{baud}")
     last_freq = None
@@ -43,4 +43,7 @@ def main(port: str = "COM3", baud: int = 115200):
 
 
 if __name__ == "__main__":
-    main(port="COM3")   # 改成你的COM口
+    import sys
+    _p = sys.argv[1] if len(sys.argv) > 1 else "COM3"
+    _b = int(sys.argv[2]) if len(sys.argv) > 2 else 460800
+    main(port=_p, baud=_b)   # 用法: python serial_monitor_starter.py COM5 [波特率]

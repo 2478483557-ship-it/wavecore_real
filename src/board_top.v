@@ -267,6 +267,10 @@ module board_top (
         .wav_hold   (wav_hold  )
     );
     // TX 引脚 3 路互斥: 波形 > 谱峰 > 测量
+    // ---- 3.12 自研FFT(F4): [2026-09-16 晚] 临时移出设计(排查隔离), 源文件保留
+    //      self_fft_1024.v / self_fft_report.v / twiddle_rom.v + blk_mem_gen_1
+    //      重新启用时: 恢复两实例 + mux 四路 + ext_hold + led[3] 心跳
+    // ---- TX 引脚 3 路互斥: 波形 > 谱峰 > 测量
     assign uart_txd = wav_act ? wav_txd : (fft_act ? fft_txd : m_txd);
 
     // ---- 3.11 F1 转发口: 把整条串口数据流镜像给 STM32 ----

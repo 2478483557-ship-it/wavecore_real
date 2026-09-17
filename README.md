@@ -32,7 +32,7 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 | 2 | ADC 采集 | AD9280 采样(25M) + DA→AD 回环自测 | 回环 Vpp≈133 |
 | 3 | 自动测量 | 频率全频段 **100Hz~1MHz 误差<1%**（闸门/测周自动切换+迟滞+自适应阈值）；Vpp 一键测量 | 100Hz±3、1k/5k/37.5k/100k/1M 精确 |
 | 4 | FFT 频谱 | **4096 点 FFT** @50kHz 采样，Hann 加窗，双峰检测 | **1k+1.1k 双音分开：S=1001 + A=1099** |
-| 5 | 串口协议 | 115200-8N1 双向；上行 F=/S=/A=；下行 0x81 切档/0x85 任意频/0x87 双音（带校验和，帧见 `board/uart_protocol.md`） | 电脑远程切频实测 ✅ |
+| 5 | 串口协议 | 460800-8N1 双向(v1.8 提速)；上行 F=/S=/A=；下行 0x81 切档/0x85 任意频/0x87 双音（带校验和，帧见 `board/uart_protocol.md`） | 电脑远程切频实测 ✅ |
 | 6 | 波形上传(0x83) | 请求一次上传最近 **1024 点@50kHz**(20.5ms)波形；RAM 用 blk_mem_gen IP(官方姿势, SK-016) | PC 画出 1kHz 正弦 ✅ |
 | 7 | 资源优化 | 大缓存/大表全部走 BRAM(BMG/hann/f_ram/sine) | Utilization: LUT/FF/BRAM 均在限内, 带 ILA 布局通过 |
 | 7 | 未做 | 音乐彩蛋(XADC)、自研 FFT 对比、扫频等 → 见 `report/task_overview.md` | - |
@@ -51,7 +51,7 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 ## 怎么玩（快速上手 3 步）
 
 1. 综合→生成比特流→Program Device（无 ILA 改动则流程固定；若综合报错先看 `skill/README.md` 技能包）
-2. 串口助手 115200 打开，看到 `F=0100000Hz V=133` 即活
+2. 串口助手 460800 打开，看到 `F=0100000Hz V=133` 即活
 3. HEX 发命令玩功能（完整帧见协议文档）：
    - 切 1kHz：`5A A5 85 00 04 E8 03 00 00 74` → F≈1000、S≈1001
    - 加 1.1kHz 开双音：`5A A5 87 00 04 4C 04 00 00 DB` → S=1001 + **A=1099**（双峰分辨！）
@@ -68,7 +68,7 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 4. **board/sample_serial_log.txt**（真实日志，离线练解析用）
 5. 代码入口：上位机 → `host/serial_monitor_starter.py`（起步）；看波形 → `host/wave_plot_example.py`
 
-> **实机须知**：板子已固化到 Flash，**插 USB 上电即出数据**（115200），无需 Vivado。测频率不受限；**看波形/频谱请设 ≤20kHz**（如 1kHz：HEX 发 `5A A5 85 00 04 E8 03 00 00 74`）。串口助手与 Python 不要同时占同一 COM 口。
+> **实机须知**：板子已固化到 Flash，**插 USB 上电即出数据**（460800），无需 Vivado。测频率不受限；**看波形/频谱请设 ≤20kHz**（如 1kHz：HEX 发 `5A A5 85 00 04 E8 03 00 00 74`）。串口助手与 Python 不要同时占同一 COM 口。
 
 ## 分工与进度
 

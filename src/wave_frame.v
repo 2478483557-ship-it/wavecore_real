@@ -49,7 +49,11 @@ module wave_frame (
             dina   <= 8'd0;
         end
         else if (!wav_act_r) begin
-            if (dcnt == 32'd999) begin
+            if (fill_rst) begin
+                wr_idx <= 10'd0;               // 触发归零: 帧从触发点开始
+                dcnt   <= 32'd0;
+            end
+            else if (dcnt == 32'd999) begin
                 dcnt <= 32'd0;
                 wea  <= 1'b1;                 // 写脉冲
                 dina <= ad_cap;
@@ -74,7 +78,7 @@ module wave_frame (
     //======== 发送状态机 ========
     reg [3:0] st;
     localparam ST_IDLE=4'd0, ST_HOLD=4'd1, ST_HEAD=4'd2, ST_PAY=4'd3,
-               ST_TAIL=4'd4, ST_DONE=4'd5;
+               ST_TAIL=4'd4, ST_DONE=4'd5, ST_FILL=4'd6;
     reg        req_l;
     reg        wav_act_r;
     reg        guard;
@@ -82,6 +86,10 @@ module wave_frame (
     reg [9:0]  cptr;
     reg [9:0]  pidx;
     reg [7:0]  sum;
+    reg        fill_seen;
+    reg        prev_zero;     // wr_idx 是否刚经过 0
+    reg [1:0]  fill_wraps;    // (保留未用)
+    reg        fill_rst;      // [触发] 请采集块把写指针归零(单周期脉冲)
 
     // ---- 触发检测(120/136 迟滞) ----
     reg [7:0] prev_ad;
@@ -107,6 +115,10 @@ module wave_frame (
             pidx     <= 10'd0;
             sum      <= 8'd0;
             addra_s  <= 10'd0;
+            fill_seen<= 1'b0;
+            prev_zero<= 1'b1;
+            fill_wraps<= 2'd0;
+            fill_rst  <= 1'b0;
         end
         else begin
             tx_start <= 1'b0;
@@ -116,15 +128,30 @@ module wave_frame (
                 ST_IDLE: if (req_l) st <= ST_HOLD;
                 ST_HOLD: begin
                     if (!meas_busy && !fft_busy && trig_ok) begin   // 等总线+等触发
-                        wav_act_r <= 1'b1;
-                        cptr  <= wr_idx;       // 快照(下一帧起点=最旧点)
-                        addra_s <= wr_idx;     // 指向首点(组合读 douta)
-                        hidx  <= 4'd0;
-                        pidx  <= 10'd0;
-                        sum   <= 8'd0;
-                        guard <= 1'b0;
-                        st    <= ST_HEAD;
+                        fill_rst  <= 1'b1;              // 请采集块归零写指针
+                        prev_zero <= 1'b1;              // 归零后从 0 开始
+                        st        <= ST_FILL;
                     end
+                end
+                ST_FILL: begin
+                    // 归零后写满一整圈(1024 新点) -> 冻结发送; 帧首点=触发点
+                    if (fill_rst) begin
+                        fill_rst <= 1'b0;          // 单周期脉冲结束
+                    end
+                    else if (wr_idx == 10'd0) begin
+                        if (!prev_zero) begin      // 绕回 0 = 1024 点已写满
+                            cptr     <= 10'd0;
+                            addra_s  <= 10'd0;
+                            hidx     <= 4'd0;
+                            pidx     <= 10'd0;
+                            sum      <= 8'd0;
+                            guard    <= 1'b0;
+                            wav_act_r<= 1'b1;
+                            st       <= ST_HEAD;
+                        end
+                        prev_zero <= 1'b1;
+                    end
+                    else prev_zero <= 1'b0;
                 end
                 ST_HEAD: begin
                     if (guard) begin
