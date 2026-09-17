@@ -19,5 +19,6 @@ stm32/
 2. Keil 工程建议只传：`.uvprojx`、源码 `.c/.h`、需要的启动文件/库（体积大的库文件可以跟队长说一声放网盘，不硬塞 git）
 
 ## 与 FPGA 联调接口
-- 数据协议：`../board/uart_protocol.md`（v1.3）—— 共享宪法，改前先全队说+升版本
-- FPGA 转发口(F1) 尚未接好前：先用串口助手把 `../board/sample_serial_log.txt` 的内容喂给屏测显示
+- 数据协议：`../board/uart_protocol.md`（**v1.11**）—— 共享宪法，改前先全队说+升版本；**§6 有常用帧速查表**
+- **FPGA 转发口(F1) 代码已完成(9/15)**：接线 N13(FPGA→STM32 RX) / R14(STM32→FPGA TX)，**460800-8N1**，数据与电脑侧完全一致（协议 §5）
+- 固化新固件后即可真机联调；过渡期仍可用 `../board/sample_serial_log.txt` 喂屏测显示

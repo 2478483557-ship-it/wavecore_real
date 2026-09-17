@@ -1,47 +1,32 @@
 # src/ — 设计源码（RTL）
 
-所有 FPGA 源码放在这里。**规则：一个模块一个目录，纯英文命名。**
+所有 FPGA 源码平铺在此目录。**规则：纯英文命名；仓库 UTF-8 / 工程 GBK（转换见 hw_analysis/to_gbk.py）。**
+
+## 当前文件一览（2026-09-17）
 
 ```
 src/
-├── clk/        # 时钟管理（MMCM 锁相环、复位）
-├── dds/        # DDS 信号源（NCO + 查找表）
-├── adc/        # AD9280 采样控制
-├── measure/    # 自动测量（频率/幅度/Vpp）
-├── fft/        # FFT 频谱（IP 核 + 双模式控制）
-├── audio/      # 音频彩蛋（XADC + 频谱条）
-├── uart/       # UART 发送 + 数据打包
-└── top/        # 顶层模块（例化所有子模块）
+├── board_top.v        # 顶层：例化全部模块 + 串口行仲裁
+├── dds_nco.v          # 32bit 相位累加器
+├── sine_rom.v + sine_rom.hex      # 正弦查找表
+├── dual_tone.v / freq_ctrl.v      # 双音控制 / 频率档位控制
+├── da_send.v / ad_driver.v        # DA 时序 / AD 采样
+├── freq_meter.v       # 测频+Vpp+占空比+脉宽（三层抗噪：2拍确认/施密特/5点中值）
+├── measure_report.v   # 上行 F=/D= 两行（39字节连发）
+├── fft_demo.v / fft_report.v / hann_rom.v(+hex)   # 4096点FFT → S=/A= 行
+├── wave_frame.v       # 0x83 波形上传 + 0x89 触发（单写者+归零）
+├── uart_tx.v / uart_rx.v / cmd_decoder.v / bin2bcd.v / div_restore.v
+├── uart_mirror.v      # F1 转发口（镜像串口流给 STM32）
+└── （存档，未参与综合）self_fft_1024.v / self_fft_report.v / twiddle_rom.v / tw_*.hex
 ```
 
 ## 代码规范
 
-1. **文件头模板**（每个 .v 文件开头必须写）：
-
-```verilog
-// ============================================================================
-// 模块名  : xxx
-// 功能    : 一句话说清这个模块干什么
-// 输入    : clk / rst_n / ...
-// 输出    : ...
-// 时序    : 说明关键时序（如：在 clk 上升沿采样）
-// 作者    : your name     日期 : 2026-xx-xx
-// 版本    : v1.0
-// 修改记录: v1.0 初版
-// ============================================================================
-```
-
-2. **命名规范**（赛题要求纯英文命名）：
-   - 文件名 / 模块名：`dds_top.v`、`phase_accumulator.v`（小写下划线）
-   - 信号名：`clk`、`rst_n`（低有效复位加 `_n`）、`data_out`、`cnt`
-   - 参数名：大写，如 `parameter WIDTH = 32`
-
+1. **文件头模板**（每个 .v 文件开头必须写）：模块名/功能/输入输出/时序说明/作者/日期/版本。
+2. **命名规范**：文件名小写下划线；`rst_n` 低有效；参数名大写。
 3. **编码风格**：
-   - 时序逻辑（寄存器）：统一 `always @(posedge clk or negedge rst_n)`
-   - 组合逻辑：用 `assign` 或 `always @(*)`
-   - 一个 always 块只做一件事，不要混
-   - 注释写"为什么"而不是"是什么"
-
-4. **字符编码**：本地 Vivado 编辑用 GBK 没问题，**push 到 GitHub 前把文件转成 UTF-8**（VS Code / Notepad++ 均可一键转换），注释里的中文才不会乱码。
-
-5. 每个模块配一个 testbench（放 `sim/` 下），先仿真后上板。
+   - 时序逻辑统一 `always @(posedge clk or negedge rst_n)`
+   - 一个 always 块只做一件事；**一个寄存器只允许一个 always 块写（单写者，防双驱动 DRC）**
+   - 注释写"为什么"
+4. **字符编码**：工程内 GBK，push 前转 UTF-8（脚本 `hw_analysis/to_gbk.py` 可双向）。
+5. 关键模块配 testbench（`sim/`），先仿真后上板。
