@@ -15,6 +15,7 @@ module measure_report (
     input  wire [15:0] duty_x10,
     input  wire [19:0] width_us,
     output wire        uart_txd,
+    input  wire [1:0]  wave_type,   // 波形识别: 0方波 1正弦 2三角 3其他
     output wire        meas_busy,
     input  wire        ext_hold,
     output wire [7:0]  dbg_fsm,
@@ -36,6 +37,12 @@ module measure_report (
     //================ 锁存 ================
     reg [15:0] duty_s;
     reg [19:0] width_s;
+    // [9/20] TY 可信闸门: 频率稳定(±1.5%) 且 ≤25kHz 才给识别结论
+    reg [23:0] prev_f;
+    wire [23:0] f_diff = (freq_hz > prev_f) ? (freq_hz - prev_f) : (prev_f - freq_hz);
+    wire f_stable = (prev_f == 24'd0) || (f_diff <= (prev_f >> 6) + 24'd16);
+    wire ty_ok = (freq_hz <= 24'd25000) && f_stable;
+    wire [1:0] ty_now = ty_ok ? wave_type : 2'd3;
 
     function [3:0] fd10(input [27:0] v, input [3:0] idx);
         fd10 = v[idx*4 +: 4];
@@ -109,7 +116,14 @@ module measure_report (
             6'd35: char_at = 8'h75;                        // 'u'
             6'd36: char_at = 8'h73;                        // 's'
             6'd37: char_at = 8'h0D;
-            default: char_at = 8'h0A;                      // 38 LF
+            6'd38: char_at = 8'h0A;                        // 38 LF
+            6'd39: char_at = 8'h54;                        // 'T'
+            6'd40: char_at = 8'h59;                        // 'Y'
+            6'd41: char_at = 8'h3D;                        // '='
+            6'd42: char_at = 8'd48 + {2'd0, ty_now};       // 0/1/2/3(带闸门)
+            6'd43: char_at = 8'h0D;
+            6'd44: char_at = 8'h0A;
+            default: char_at = 8'h0A;
         endcase
     endfunction
 
@@ -144,6 +158,7 @@ module measure_report (
 
             case (state)
                 S_WAIT: if (meas_done && !ext_hold) begin
+                            prev_f <= freq_hz;
                             freq_start <= 1'b1;
                             state <= S_CF;
                         end
@@ -165,8 +180,8 @@ module measure_report (
                         if (tx_busy) guard <= 1'b0;
                     end
                     else if (!tx_busy) begin
-                        if (idx == 6'd39) begin
-                            state <= S_WAIT;
+                        if (idx == 6'd45) begin
+                            state <= S_WAIT;                 // 45字节(F行+V行+TY行)
                         end
                         else begin
                             tx_byte  <= ch;

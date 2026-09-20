@@ -39,8 +39,9 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 | 8 | 波形整形(0x88) | 正弦/方波/三角 一键切换 | 方波全链路验证 ✅ |
 | 9 | 触发采集(0x89) | 自由/上升沿/下降沿；帧首点=触发点 | B(上升)前6点全高 / C(下降)全低 ✅ |
 | 10 | 资源与时序 | 大表全部 BRAM；无 ILA 版时序 WNS≈+3.5ns | 布局通过 ✅ |
-| 11 | 自研FFT(对比) | 1024点 DIF，`0x8A` 按需运行回 **SF=/S2=/S3= 三峰行**；与 IP 并排对比 | **9/19 数值验证：SF=976/S2=1025/S3=2978（逐字命中模型）** ✅ |
-| 12 | 未做(可选) | 音乐彩蛋(XADC)、扫频、高频多档fs → `report/backlog.md` | - |
+| 11 | 自研FFT(对比) | 1024点 DIF，`0x8A` 按需运行回 **SF=/S2=/S3= 三峰行**；[资源对比表](report/resource_compare.md)：**502 LUT/7 DSP** vs IP 1771 LUT/9 DSP | SF=976/S2=1025/S3=2978（逐字命中模型）✅ |
+| 12 | **波形自动识别**(9/20) | 占比法识别 方波/正弦/三角；输出 `TY=` 行（含可信闸门）| ✅ 五场景全对（1k正弦/方波/三角 + 混叠/双音报3）|
+| 13 | 未做(可选) | 音乐彩蛋(XADC)、扫频、高频多档fs → `report/backlog.md` | - |
 
 ## Hardware / 硬件平台
 

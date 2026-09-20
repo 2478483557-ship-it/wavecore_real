@@ -45,7 +45,8 @@ module board_top (
     wire        sf_done_w;         // 自研FFT: 完成脉冲
     wire        sf_act_w;          // 自研FFT: 占用TX
     wire        sf_txd;            // 自研FFT: TX
-    wire        sf_run_w;          // 0x8A 运行一次
+    wire        sf_run_w;
+    wire [1:0]  wave_type_w;       // 波形识别结果          // 0x8A 运行一次
     wire [23:0] sf_f2_w;           // [调试] 第二峰
     wire [23:0] sf_f3_w;           // [调试] 第三峰
     wire [7:0]  rx_byte;           // uart_rx 收到的字节
@@ -214,6 +215,7 @@ module board_top (
         .vpp        (meas_vpp   ),
         .meas_done2 (meas_done2 ),
         .duty_x10   (meas_duty  ),
+        .wave_type  (wave_type_w),
         .width_us   (meas_wid   ),
         .uart_txd   (m_txd      ),
         .meas_busy  (m_busy     ),
@@ -275,6 +277,14 @@ module board_top (
         .wav_hold   (wav_hold  )
     );
     // TX 引脚 3 路互斥: 波形 > 谱峰 > 测量
+    // ---- 3.11b 波形自动识别(9/20): 占比法, 输出 TY= 行 ----
+    wave_id u_wid (
+        .clk      (sys_clk    ),
+        .rst_n    (sys_rst_n  ),
+        .ad_cap   (ad_cap     ),
+        .wave_type(wave_type_w)
+    );
+
     // ---- 3.12 自研FFT(F4 复活版, 2026-09-17): 1024点 DIF, 0x8A 按需, SF= 行 ----
     self_fft_1024 u_scfft (
         .clk      (sys_clk   ),
