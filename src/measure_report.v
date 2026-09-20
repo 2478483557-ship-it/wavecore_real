@@ -32,11 +32,25 @@ module measure_report (
         .bin(freq_hz), .bcd(freq_bcd), .done(freq_done) );
     bin2bcd #(.IN_W(8), .OUT_W(12)) u_b2v (
         .clk(clk), .rst_n(rst_n), .start(vpp_start),
-        .bin({8'd0, vpp}), .bcd(vpp_bcd), .done(vpp_done) );
+        .bin({8'd0, v_s}), .bcd(vpp_bcd), .done(vpp_done) );
 
     //================ 锁存 ================
     reg [15:0] duty_s;
     reg [19:0] width_s;
+    // [9/20] 3窗中值平滑: D/W/V 抗"偶发坏窗"(F 保持即时)
+    reg [7:0]  v_s;
+    reg [7:0]  vd1, vd2;
+    reg [15:0] dd1, dd2;
+    reg [19:0] wd1, wd2;
+    function [7:0] med8(input [7:0] a,b,c);
+        med8 = (a<b) ? ((b<c)?b:((a<c)?c:a)) : ((a<c)?a:((b<c)?c:b));
+    endfunction
+    function [15:0] med16(input [15:0] a,b,c);
+        med16 = (a<b) ? ((b<c)?b:((a<c)?c:a)) : ((a<c)?a:((b<c)?c:b));
+    endfunction
+    function [19:0] med20(input [19:0] a,b,c);
+        med20 = (a<b) ? ((b<c)?b:((a<c)?c:a)) : ((a<c)?a:((b<c)?c:b));
+    endfunction
     // [9/20] TY 可信闸门: 频率稳定(±1.5%) 且 ≤25kHz 才给识别结论
     reg [23:0] prev_f;
     wire [23:0] f_diff = (freq_hz > prev_f) ? (freq_hz - prev_f) : (prev_f - freq_hz);
@@ -150,6 +164,8 @@ module measure_report (
             guard      <= 1'b0;
             duty_s     <= 16'd0;
             width_s    <= 20'd0;
+            v_s<=8'd0; vd1<=8'd0; vd2<=8'd0;
+            dd1<=16'd0; dd2<=16'd0; wd1<=20'd0; wd2<=20'd0;
         end
         else begin
             tx_start   <= 1'b0;
@@ -159,6 +175,10 @@ module measure_report (
             case (state)
                 S_WAIT: if (meas_done && !ext_hold) begin
                             prev_f <= freq_hz;
+                            // V 3窗中值
+                            v_s  <= med8(vpp, vd1, vd2);
+                            vd2  <= vd1;
+                            vd1  <= vpp;
                             freq_start <= 1'b1;
                             state <= S_CF;
                         end
@@ -169,8 +189,11 @@ module measure_report (
                         end
                 S_CV:   state <= S_WV;
                 S_WV:   if (vpp_done) begin
-                            duty_s  <= duty_x10;
-                            width_s <= width_us;
+                            // D/W 3窗中值
+                            duty_s  <= med16(duty_x10, dd1, dd2);
+                            width_s <= med20(width_us, wd1, wd2);
+                            dd2     <= dd1;  dd1 <= duty_x10;
+                            wd2     <= wd1;  wd1 <= width_us;
                             idx   <= 6'd0;
                             guard <= 1'b0;
                             state <= S_SEND;

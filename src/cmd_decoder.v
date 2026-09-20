@@ -31,7 +31,8 @@ module cmd_decoder (
     output reg         wave_req,   // 0x83 请求波形(1 拍脉冲)
     output reg  [1:0]  wave_sel,   // 0x88 波形选择: 0=正弦 1=方波 2=三角
     output reg  [1:0]  trig_mode,  // 0x89 触发模式: 0=自由 1=上升 2=下降
-    output reg         sf_run      // 0x8A 自研FFT运行一次(脉冲)
+    output reg         sf_run,     // 0x8A 自研FFT运行一次(脉冲)
+    output reg         sweep_en    // 0x8B 扫频使能(电平: 1=扫/0=停)
 );
 
     // 换算常量: round(2^32/5e7 x 2^24)
@@ -72,6 +73,7 @@ module cmd_decoder (
             wave_sel    <= 2'd0;
             trig_mode   <= 2'd0;
             sf_run      <= 1'b0;
+            sweep_en    <= 1'b0;
             wave_req    <= 1'b0;
             typ_r       <= 8'd0;
             len_r       <= 16'd0;
@@ -83,7 +85,7 @@ module cmd_decoder (
             arb_load    <= 1'b0;
             dual_load   <= 1'b0;
             wave_req    <= 1'b0;
-            sf_run      <= 1'b0;               // 0x8A 单拍脉冲
+            sf_run      <= 1'b0;
             if (rx_done) begin
                 case (st)
                     ST_H1: begin
@@ -144,6 +146,9 @@ module cmd_decoder (
                                 end
                                 8'h8A: begin             // 自研FFT: 运行一次
                                     sf_run <= 1'b1;
+                                end
+                                8'h8B: begin             // 扫频: 1=开始 0=停止
+                                    sweep_en <= pbuf[0][0];
                                 end
                                 default: ;               // 其余命令暂不支持
                             endcase

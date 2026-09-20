@@ -46,7 +46,10 @@ module board_top (
     wire        sf_act_w;          // 自研FFT: 占用TX
     wire        sf_txd;            // 自研FFT: TX
     wire        sf_run_w;
-    wire [1:0]  wave_type_w;       // 波形识别结果          // 0x8A 运行一次
+    wire [1:0]  wave_type_w;       // 波形识别结果
+    wire        sweep_en_w;        // 0x8B 扫频使能
+    wire        sw_load_w;         // 扫频: 新频率脉冲
+    wire [31:0] sw_fcw_w;          // 扫频: fcw          // 0x8A 运行一次
     wire [23:0] sf_f2_w;           // [调试] 第二峰
     wire [23:0] sf_f3_w;           // [调试] 第三峰
     wire [7:0]  rx_byte;           // uart_rx 收到的字节
@@ -66,6 +69,17 @@ module board_top (
         .key_pulse (key_pulse)
     );
 
+    // ---- 3.11c 扫频控制 (9/20): 与 0x85 共用 arb 通道(cmd 优先) ----
+    sweep_ctrl u_sweep (
+        .clk  (sys_clk  ),
+        .rst_n(sys_rst_n),
+        .en   (sweep_en_w),
+        .load (sw_load_w),
+        .fcw  (sw_fcw_w)
+    );
+    wire        arb_load_m = arb_load | sw_load_w;
+    wire [31:0] arb_fcw_m  = arb_load ? arb_fcw : sw_fcw_w;
+
     // ---- 0.5 频率控制: 按键/串口切档/串口任意频率 -> fcw + LED ----
     freq_ctrl u_freq (
         .clk         (sys_clk     ),
@@ -73,8 +87,8 @@ module board_top (
         .key_pulse   (key_pulse   ),
         .preset_load (preset_load ),
         .preset_val  (preset_val  ),
-        .arb_load    (arb_load    ),
-        .arb_fcw     (arb_fcw     ),
+        .arb_load    (arb_load_m  ),
+        .arb_fcw     (arb_fcw_m   ),
         .fcw         (fcw         ),
         .led         (led         ),
         .single_chg  (single_chg  )
@@ -116,7 +130,8 @@ module board_top (
         .wave_req    (wave_req_w  ),
         .wave_sel    (wave_sel_w  ),
         .trig_mode   (trig_mode_w ),
-        .sf_run      (sf_run_w    )
+        .sf_run      (sf_run_w    ),
+        .sweep_en    (sweep_en_w  )
     );
 
     // ---- 0.8 双音模式控制(0x87 开双音, 任何单音设定自动回单音) ----

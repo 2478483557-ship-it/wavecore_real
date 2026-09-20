@@ -4,7 +4,7 @@
 A multi-function signal measurement & spectrum analysis system based on FPGA.
 
 > 全国大学生嵌入式芯片与系统设计竞赛 2026 · FPGA 创新设计赛道（AMD）· 自主选题（初级组）
-> 状态更新：2026-09-17（信号源/测量套件/FFT双峰/波形上传/**触发采集**全上板验证 ✅；测量含**三层数字抗噪**；串口 **460800**；协议 v1.11）
+> 状态更新：2026-09-20（全程：信号源/测量/FFT双峰/**自研FFT三峰**/波形上传/触发/**波形自动识别**/**扫频**全部上板验证 ✅；**已 Flash 固化**（断电自启）；串口 **460800**；协议 **v1.15**）
 
 ---
 
@@ -22,7 +22,7 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
   │              ├─ 波形上传(0x83) + 触发采集(0x89)
   │              └─ 串口上行 ──▶ F=/S=/A= + D=/W= 行
   │                                   │
-  └──────────────── 上位机/串口屏 ◀───┘
+  └──────────────── PC 上位机 ◀───┘（F1 转发口保留，供 STM32 等外设选配）
 ```
 
 ## Features / 功能（均已上板验证 ✅）
@@ -33,22 +33,23 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 | 2 | ADC 采集 | AD9280 采样(25M) + DA→AD 回环自测 | 回环 Vpp≈133 |
 | 3 | 自动测量 | 频率全频段 **100Hz~1MHz 误差<1%**（闸门/测周自动切换+迟滞+自适应阈值+**三层抗噪**）；Vpp 一键测量 | 100Hz±3、1k/5k/37.5k/100k/1M 精确 |
 | 4 | FFT 频谱 | **4096 点 FFT** @50kHz 采样，Hann 加窗，双峰检测 | **1k+1.1k 双音分开：S=1001 + A=1099** |
-| 5 | 串口协议 | 460800-8N1 双向(**v1.11**)；上行 F=/S=/A=/D=/W=；下行 0x81/0x85/0x87/0x88/0x89（帧速查表见协议 §6） | 全功能远程实测 ✅ |
+| 5 | 串口协议 | 460800-8N1 双向(**v1.15**)；上行 F=/S=/A=/D=/W=/TY=/SF=/S2=/S3=；下行 0x81/0x83/0x85/0x87/0x88/0x89/0x8A/0x8B（帧速查表 §6） | 全功能远程实测 ✅ |
 | 6 | 波形上传(0x83) | 请求一次上传最近 **1024 点@50kHz**(20.5ms)波形；RAM 用 blk_mem_gen IP(官方姿势, SK-016) | PC 画出 1kHz 正弦 ✅ |
-| 7 | 占空比 + 脉宽 | 计窗统计+施密特迟滞+5点中值抗噪；由测量帧第二行输出 `D=/W=` | 方波1k/100k：49.9~50.0%、500us/6us ✅ |
+| 7 | 占空比 + 脉宽 | 计窗统计+施密特+5点中值+**3窗中值平滑**；由测量帧第二行输出 `D=/W=` | 方波1k/100k：49.9~50.4%、500us/6us ✅ |
 | 8 | 波形整形(0x88) | 正弦/方波/三角 一键切换 | 方波全链路验证 ✅ |
 | 9 | 触发采集(0x89) | 自由/上升沿/下降沿；帧首点=触发点 | B(上升)前6点全高 / C(下降)全低 ✅ |
 | 10 | 资源与时序 | 大表全部 BRAM；无 ILA 版时序 WNS≈+3.5ns | 布局通过 ✅ |
 | 11 | 自研FFT(对比) | 1024点 DIF，`0x8A` 按需运行回 **SF=/S2=/S3= 三峰行**；[资源对比表](report/resource_compare.md)：**502 LUT/7 DSP** vs IP 1771 LUT/9 DSP | SF=976/S2=1025/S3=2978（逐字命中模型）✅ |
 | 12 | **波形自动识别**(9/20) | 占比法识别 方波/正弦/三角；输出 `TY=` 行（含可信闸门）| ✅ 五场景全对（1k正弦/方波/三角 + 混叠/双音报3）|
-| 13 | 未做(可选) | 音乐彩蛋(XADC)、扫频、高频多档fs → `report/backlog.md` | - |
+| 13 | **扫频模式**(9/20) | `0x8B` 开关；1k→20k/100Hz步/50ms，循环 | ✅ 上板验证（配 Spectrogram 演示）|
+| 14 | 未做(可选) | 音乐彩蛋(需先确认麦克风/资源)、高频多档fs、Spectrogram(上位机/屏，接收端实现) → `report/backlog.md` | - |
 
 ## Hardware / 硬件平台
 
 - 正点原子达芬奇 Pro（AMD Artix-7 XC7A35T）
 - ATK_HS_AD_DA 模块（AD9708 DAC / AD9280 ADC）
-- STM32F407（人机交互，转发数据到串口屏——队友2 分工）
-- 淘晶驰串口屏（板载显示）；驻极体麦克风（彩蛋，预留 XADC）
+- 人机交互：**PC 上位机（Python）**为主显示器（波形/仪表/Spectrogram）
+- ~~STM32F407 + 淘晶驰串口屏~~（9/20 决策取消；F1 转发口代码保留备用）；驻极体麦克风（彩蛋预留，未做）
 
 ## Environment / 开发环境
 
@@ -62,6 +63,8 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
    - 切 1kHz：`5A A5 85 00 04 E8 03 00 00 74` → F≈1000、S≈1001、D≈050%
    - 切方波/三角：`5A A5 88 00 01 01 8A`（方波）/ `...02 8B`（三角）→ D≈50%、W≈半周期
    - 触发抓波：`5A A5 89 00 01 01 8B`（上升沿）→ `5A A5 83 00 01 00 84` → 波形从触发点开始
+   - 扫频演示：`5A A5 8B 00 01 01 8D`（开始）/ `5A A5 8B 00 01 00 8C`（停止）→ 频率 1k→20k 循环
+   - 自研FFT对照：`5A A5 8A 00 01 00 8B` → SF=/S2=/S3= 三行
    - 加 1.1kHz 开双音：`5A A5 87 00 04 4C 04 00 00 DB` → S=1001 + **A=1099**（双峰分辨！）
 
 > 注意：FFT/波形观察窗 fs=50kHz（≤25kHz 才能看清波形/频谱，高频会混叠属正常）；双音下 F= 行会晃是拍频物理现象。
@@ -71,7 +74,7 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 ## 给队友：先读这些（按顺序）
 
 1. **README.md**（本文件，总览）
-2. **board/uart_protocol.md**（协议 **v1.11**：F=/S=/A=/D=/W= 行；0x81/0x85/0x87/0x88/0x89/0x83 命令；§6 帧速查表）
+2. **board/uart_protocol.md**（协议 **v1.15**：F=/S=/A=/D=/W=/TY=/SF=/S2=/S3= 行；0x81/0x83/0x85/0x87/0x88/0x89/0x8A/0x8B 命令；§6 帧速查表）
 3. 你的任务书：队友1 → `report/teammate1_task.md`；队友2 → `report/teammate2_task.md`
 4. **board/sample_serial_log.txt**（真实日志，离线练解析用）
 5. 代码入口：上位机 → `host/serial_monitor_starter.py`（起步）；看波形 → `host/wave_plot_example.py`
@@ -92,10 +95,10 @@ wavecore/
 ├── src/               # 源码：board_top/dds_nco/sine_rom/dual_tone/freq_ctrl/da_send/ad_driver/freq_meter(三层抗噪)/measure_report/fft_demo/fft_report/hann_rom/wave_frame(触发)/uart_tx/uart_rx/cmd_decoder/bin2bcd/div_restore/uart_mirror(F1) …
 ├── sim/               # 仿真 testbench
 ├── build/             # 构建脚本(reset_and_build.tcl)
-├── board/             # 上板：XDC、引脚表、串口协议 v1.11、实测记录、样例日志
+├── board/             # 上板：XDC、引脚表、串口协议 v1.15、实测记录、样例日志、flash_guide.md
 ├── host/              # 上位机(队友1 工位: serial_monitor_starter.py / wave_plot_example.py)
-├── stm32/             # STM32+串口屏(队友2 工位, 见其 README)
-├── skill/             # 技能包 SK-001~021（三层抗噪/触发/大逻辑静默化等，含 Golden 案例）
+├── stm32/             # STM32+串口屏 资料归档（9/20 屏方案取消，F1 转发口保留）
+├── skill/             # 技能包 SK-001~028（抗噪/触发/FFT四坑/固化等，含 Golden 案例）
 └── report/            # 进度/任务书/协作须知/对标/升级/LLM记录/战报/自研FFT档案/backlog
 ```
 

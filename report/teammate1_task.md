@@ -1,6 +1,6 @@
 # 队友1 任务书：PC 上位机(Python) v1
 
-> 前置：GitHub 拉取 wavecore 仓库（**board/uart_protocol.md v1.11** + board/sample_serial_log.txt + host/serial_monitor_starter.py；协议已含 §6 帧速查表与 D=/W= 行说明）
+> 前置：拉取仓库（**board/uart_protocol.md v1.15** + 样例日志 + starter；v1.15 含 TY=/SF·S2·S3=/0x8B 扫频 与 §6 全帧表）
 
 ## 你要交付
 1. **串口通信层**：能连板卡(**460800**-8N1)、收发按协议、异常重连
