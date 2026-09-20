@@ -42,7 +42,7 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 | 11 | 自研FFT(对比) | 1024点 DIF，`0x8A` 按需运行回 **SF=/S2=/S3= 三峰行**；[资源对比表](report/resource_compare.md)：**502 LUT/7 DSP** vs IP 1771 LUT/9 DSP | SF=976/S2=1025/S3=2978（逐字命中模型）✅ |
 | 12 | **波形自动识别**(9/20) | 占比法识别 方波/正弦/三角；输出 `TY=` 行（含可信闸门）| ✅ 五场景全对（1k正弦/方波/三角 + 混叠/双音报3）|
 | 13 | **扫频模式**(9/20) | `0x8B` 开关；1k→20k/100Hz步/50ms，循环 | ✅ 上板验证（配 Spectrogram 演示）|
-| 14 | 未做(可选) | 音乐彩蛋(需先确认麦克风/资源)、高频多档fs、Spectrogram(上位机/屏，接收端实现) → `report/backlog.md` | - |
+| 14 | 未做(可选) | 音乐彩蛋(需先确认麦克风/资源)、高频多档fs、Spectrogram(上位机版) → `report/backlog.md`（权威状态板）| - |
 
 ## Hardware / 硬件平台
 
