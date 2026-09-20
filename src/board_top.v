@@ -41,6 +41,13 @@ module board_top (
     wire [19:0] meas_wid;          // 频率计: 脉宽(us)
     wire        meas_done;         // 频率计: 测量完成脉冲
     wire        meas_done2;        // 频率计: 占空比/脉宽完成脉冲
+    wire [23:0] sf_freq_w;         // 自研FFT: 峰值频率
+    wire        sf_done_w;         // 自研FFT: 完成脉冲
+    wire        sf_act_w;          // 自研FFT: 占用TX
+    wire        sf_txd;            // 自研FFT: TX
+    wire        sf_run_w;          // 0x8A 运行一次
+    wire [23:0] sf_f2_w;           // [调试] 第二峰
+    wire [23:0] sf_f3_w;           // [调试] 第三峰
     wire [7:0]  rx_byte;           // uart_rx 收到的字节
     wire        rx_done;           // uart_rx 收完脉冲
     wire        preset_load;       // 串口切档命令脉冲
@@ -107,7 +114,8 @@ module board_top (
         .dual_fcw    (dual_fcw    ),
         .wave_req    (wave_req_w  ),
         .wave_sel    (wave_sel_w  ),
-        .trig_mode   (trig_mode_w )
+        .trig_mode   (trig_mode_w ),
+        .sf_run      (sf_run_w    )
     );
 
     // ---- 0.8 双音模式控制(0x87 开双音, 任何单音设定自动回单音) ----
@@ -209,7 +217,7 @@ module board_top (
         .width_us   (meas_wid   ),
         .uart_txd   (m_txd      ),
         .meas_busy  (m_busy     ),
-        .ext_hold   (wav_hold   ),
+        .ext_hold   (wav_hold | sf_act_w),
         .dbg_fsm    (meas_dbg_fsm),
         .dbg_h_tick (meter_h_tick),
         .dbg_p_tick (meter_p_tick)
@@ -245,7 +253,7 @@ module board_top (
         .fft_hz2    (fft_hz2_w  ),
         .uart_txd   (fft_txd    ),
         .fft_active (fft_act    ),
-        .ext_hold   (wav_hold   )
+        .ext_hold   (wav_hold | sf_act_w)
     );
     // ---- 3.10 波形帧上传(F2-A): 0x83 请求 -> 传 1024 点(50kHz) ----
     wire        wave_req_w;    // 0x83 请求
@@ -267,11 +275,33 @@ module board_top (
         .wav_hold   (wav_hold  )
     );
     // TX 引脚 3 路互斥: 波形 > 谱峰 > 测量
-    // ---- 3.12 自研FFT(F4): [2026-09-16 晚] 临时移出设计(排查隔离), 源文件保留
-    //      self_fft_1024.v / self_fft_report.v / twiddle_rom.v + blk_mem_gen_1
-    //      重新启用时: 恢复两实例 + mux 四路 + ext_hold + led[3] 心跳
-    // ---- TX 引脚 3 路互斥: 波形 > 谱峰 > 测量
-    assign uart_txd = wav_act ? wav_txd : (fft_act ? fft_txd : m_txd);
+    // ---- 3.12 自研FFT(F4 复活版, 2026-09-17): 1024点 DIF, 0x8A 按需, SF= 行 ----
+    self_fft_1024 u_scfft (
+        .clk      (sys_clk   ),
+        .rst_n    (sys_rst_n ),
+        .ad_cap   (ad_cap    ),
+        .run      (sf_run_w  ),
+        .res_freq (sf_freq_w ),
+        .res_f2   (sf_f2_w   ),
+        .res_f3   (sf_f3_w   ),
+        .res_done (sf_done_w )
+    );
+    self_fft_report u_sfrpt (
+        .clk      (sys_clk   ),
+        .rst_n    (sys_rst_n ),
+        .res_freq (sf_freq_w ),
+        .res_f2   (sf_f2_w   ),
+        .res_f3   (sf_f3_w   ),
+        .res_done (sf_done_w ),
+        .m_busy   (m_busy    ),
+        .fft_act  (fft_act   ),
+        .wav_act  (wav_act   ),
+        .uart_txd (sf_txd    ),
+        .sf_active(sf_act_w  )
+    );
+    // TX 引脚 4 路互斥: 波形 > 谱峰 > 自研FFT > 测量
+    assign uart_txd = wav_act ? wav_txd : (fft_act ? fft_txd :
+                      (sf_act_w ? sf_txd : m_txd));
 
     // ---- 3.11 F1 转发口: 把整条串口数据流镜像给 STM32 ----
     uart_mirror u_mirror (

@@ -61,7 +61,9 @@ module freq_meter #(
     wire [7:0] c7_hi = (c6_lo < c4_hi) ? c4_hi : c6_lo;
     wire [7:0] c8_lo = (c7_lo < c5_hi) ? c7_lo : c5_hi;
     wire [7:0] c8_hi = (c7_lo < c5_hi) ? c5_hi : c7_lo;
-    wire [7:0] ad_med = c8_hi;                   // 中值输出
+    // [09-17 时序修复] 中值输出打一拍: 断裂 ad_cap->9级比较器->阈值/计数 长链
+    reg  [7:0] ad_med_r;
+    // 组合中值 = c8_hi(组合由 p1..p4 生成), 下拍使用
 
     // ============ 迟滞过零(测频用, 保持不变) ============
     reg        armed;
@@ -78,8 +80,8 @@ module freq_meter #(
     // [09-17 抗噪] 阈值穿越需"连续2拍"确认: 单点毛刺不再触发过零
     reg  hi_prev_q;
     reg  lo_prev_q;
-    wire hi_now_q = (ad_med >= thr_h);
-    wire lo_now_q = (ad_med <= thr_l);
+    wire hi_now_q = (ad_med_r >= thr_h);
+    wire lo_now_q = (ad_med_r <= thr_l);
     wire hi2_ok   = hi_now_q && hi_prev_q;    // 连续2拍高
     wire lo2_ok   = lo_now_q && lo_prev_q;    // 连续2拍低(重新武装也要2拍)
     wire upcross  = armed && hi2_ok;
@@ -88,9 +90,9 @@ module freq_meter #(
     // [09-17] 判高改为施密特迟滞: 高于 mid+db 置位, 低于 mid-db 清零
     //         带内的小毛刺/振铃不再把高电平时段"切碎"
     reg        hi_flag;
-    wire       hi_set  = (ad_med >= next_h);
-    wire       hi_clr  = (ad_med <= next_l);
-    wire       hi_now  = (ad_med > mid_c);       // (保留观察用)
+    wire       hi_set  = (ad_med_r >= next_h);
+    wire       hi_clr  = (ad_med_r <= next_l);
+    wire       hi_now  = (ad_med_r > mid_c);       // (保留观察用)
     reg        hi_prev;
     wire       hi_ok   = hi_flag;                // 统计用判高
     reg [31:0] win_cnt;      // 窗口时钟数
@@ -139,6 +141,7 @@ module freq_meter #(
             hi_prev <= 1'b0; hi_prev_q <= 1'b0; lo_prev_q <= 1'b0;
             hi_flag <= 1'b0;
             ad_p1 <= 8'd128; ad_p2 <= 8'd128; ad_p3 <= 8'd128; ad_p4 <= 8'd128;
+            ad_med_r <= 8'd128;
             win_cnt <= 32'd0; high_cnt <= 32'd0;
             run_cnt <= 32'd0; max_run <= 32'd0;
             hi_lat <= 32'd0; r_lat <= 32'd0; win_lat <= 32'd0;
@@ -155,6 +158,7 @@ module freq_meter #(
             ad_p2 <= ad_p1;
             ad_p3 <= ad_p2;
             ad_p4 <= ad_p3;
+            ad_med_r <= c8_hi;                 // 中值打拍
             // ---- 数据统计(每个时钟都跑) ----
             if (hi_set)      hi_flag <= 1'b1;
             else if (hi_clr) hi_flag <= 1'b0;
@@ -174,8 +178,8 @@ module freq_meter #(
             // ---- 测频用迟滞 ----
             if (upcross) armed <= 1'b0;
             else if (lo2_ok) armed <= 1'b1;
-            if (ad_med > max_v) max_v <= ad_med;
-            if (ad_med < min_v) min_v <= ad_med;
+            if (ad_med_r > max_v) max_v <= ad_med_r;
+            if (ad_med_r < min_v) min_v <= ad_med_r;
 
             case (st)
                 ST_COARSE: begin
