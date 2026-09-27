@@ -18,13 +18,17 @@ from matplotlib.figure import Figure
 from protocol import (
     StreamParser,
     command_request_waveform,
+    command_run_self_fft,
     command_set_frequency,
     command_set_preset,
     command_set_second_frequency,
+    command_set_sweep,
+    command_set_trigger,
+    command_set_waveform,
 )
 
 
-BAUD_RATE = 115200
+BAUD_RATE = 460800
 RECONNECT_INTERVAL_SECONDS = 1.0
 CH340_VID = 0x1A86
 CH340_PIDS = {0x7523, 0x5523}
@@ -204,6 +208,10 @@ class WaveCoreApp:
         self.last_csv_write_time = 0.0
         self.latest_peak_s_hz = None
         self.latest_peak_a_hz = None
+        self.latest_duty_percent = None
+        self.latest_pulse_width_us = None
+        self.latest_waveform_type = None
+        self.latest_self_fft_peaks = {"SF": None, "S2": None, "S3": None}
         self.suppress_peak_a_until = 0.0
         self.latest_waveform_samples = None
         self.latest_waveform_sample_rate_hz = None
@@ -214,8 +222,14 @@ class WaveCoreApp:
         self.vpp_var = tk.StringVar(value="-- LSB")
         self.peak_s_var = tk.StringVar(value="-- Hz")
         self.peak_a_var = tk.StringVar(value="-- Hz")
+        self.duty_var = tk.StringVar(value="-- %")
+        self.pulse_width_var = tk.StringVar(value="-- us")
+        self.detected_waveform_var = tk.StringVar(value="--")
+        self.self_fft_var = tk.StringVar(value="-- / -- / -- Hz")
         self.main_frequency_var = tk.StringVar(value="1000")
         self.second_frequency_var = tk.StringVar(value="1100")
+        self.waveform_choice_var = tk.StringVar(value="正弦")
+        self.trigger_choice_var = tk.StringVar(value="自由")
         self.waveform_info_var = tk.StringVar(value="尚未请求波形")
 
         self._configure_window()
@@ -274,6 +288,10 @@ class WaveCoreApp:
         self._measurement_card(measurements, 1, "峰峰值 Vpp", self.vpp_var)
         self._measurement_card(measurements, 2, "FFT主峰 S", self.peak_s_var)
         self._measurement_card(measurements, 3, "FFT第二峰 A", self.peak_a_var)
+        self._measurement_card(measurements, 0, "占空比 D", self.duty_var, row=1)
+        self._measurement_card(measurements, 1, "脉宽 W", self.pulse_width_var, row=1)
+        self._measurement_card(measurements, 2, "波形识别 TY", self.detected_waveform_var, row=1)
+        self._measurement_card(measurements, 3, "自研FFT SF/S2/S3", self.self_fft_var, row=1)
 
         controls = ttk.LabelFrame(self.root, text="信号源控制", padding=10)
         controls.grid(row=2, column=0, sticky="ew", padx=12, pady=6)
@@ -327,6 +345,39 @@ class WaveCoreApp:
             command=self.request_waveform,
         ).grid(row=1, column=7, columnspan=2, padx=4, pady=(10, 0), sticky="ew")
 
+        ttk.Label(controls, text="输出波形：").grid(row=2, column=0, pady=(10, 0))
+        ttk.Combobox(
+            controls,
+            textvariable=self.waveform_choice_var,
+            values=("正弦", "方波", "三角"),
+            state="readonly",
+            width=10,
+        ).grid(row=2, column=1, padx=4, pady=(10, 0))
+        ttk.Button(controls, text="应用波形", command=self.set_waveform_choice).grid(
+            row=2, column=2, padx=4, pady=(10, 0)
+        )
+
+        ttk.Label(controls, text="触发：").grid(row=2, column=3, pady=(10, 0))
+        ttk.Combobox(
+            controls,
+            textvariable=self.trigger_choice_var,
+            values=("自由", "上升沿", "下降沿"),
+            state="readonly",
+            width=10,
+        ).grid(row=2, column=4, padx=4, pady=(10, 0))
+        ttk.Button(controls, text="应用触发", command=self.set_trigger_choice).grid(
+            row=2, column=5, padx=4, pady=(10, 0)
+        )
+        ttk.Button(controls, text="运行自研FFT", command=self.run_self_fft).grid(
+            row=2, column=6, padx=4, pady=(10, 0)
+        )
+        ttk.Button(controls, text="开始扫频", command=lambda: self.set_sweep(True)).grid(
+            row=2, column=7, padx=4, pady=(10, 0)
+        )
+        ttk.Button(controls, text="停止扫频", command=lambda: self.set_sweep(False)).grid(
+            row=2, column=8, padx=4, pady=(10, 0)
+        )
+
         waveform = ttk.LabelFrame(self.root, text="波形（50 kHz采样）", padding=8)
         waveform.grid(row=3, column=0, sticky="nsew", padx=12, pady=(6, 12))
         waveform.columnconfigure(0, weight=1)
@@ -360,9 +411,9 @@ class WaveCoreApp:
         self.export_wave_button.grid(row=0, column=1, sticky="e")
 
     @staticmethod
-    def _measurement_card(parent, column, title, variable):
+    def _measurement_card(parent, column, title, variable, row=0):
         card = ttk.LabelFrame(parent, text=title, padding=12)
-        card.grid(row=0, column=column, sticky="nsew", padx=4)
+        card.grid(row=row, column=column, sticky="nsew", padx=4, pady=4)
         ttk.Label(card, textvariable=variable, style="Value.TLabel").pack()
 
     def refresh_ports(self):
@@ -466,6 +517,33 @@ class WaveCoreApp:
     def request_waveform(self):
         self._send(command_request_waveform(), "已请求波形，等待1024点数据")
 
+    def set_waveform_choice(self):
+        choices = {"正弦": 0, "方波": 1, "三角": 2}
+        name = self.waveform_choice_var.get()
+        waveform_type = choices.get(name)
+        if waveform_type is None:
+            messagebox.showerror("波形错误", "请选择正弦、方波或三角")
+            return
+        self._send(command_set_waveform(waveform_type), f"已切换输出波形：{name}")
+
+    def set_trigger_choice(self):
+        choices = {"自由": 0, "上升沿": 1, "下降沿": 2}
+        name = self.trigger_choice_var.get()
+        trigger_mode = choices.get(name)
+        if trigger_mode is None:
+            messagebox.showerror("触发错误", "请选择自由、上升沿或下降沿")
+            return
+        self._send(command_set_trigger(trigger_mode), f"已设置触发模式：{name}")
+
+    def run_self_fft(self):
+        self.latest_self_fft_peaks = {"SF": None, "S2": None, "S3": None}
+        self.self_fft_var.set("等待结果……")
+        self._send(command_run_self_fft(), "已请求运行一次自研FFT")
+
+    def set_sweep(self, enabled):
+        action = "开始" if enabled else "停止"
+        self._send(command_set_sweep(enabled), f"已发送{action}扫频命令")
+
     def export_waveform_csv(self):
         samples = self.latest_waveform_samples
         sample_rate_hz = self.latest_waveform_sample_rate_hz
@@ -521,6 +599,12 @@ class WaveCoreApp:
                 "vpp_lsb",
                 "peak_s_hz",
                 "peak_a_hz",
+                "duty_percent",
+                "pulse_width_us",
+                "waveform_type",
+                "self_fft_peak_1_hz",
+                "self_fft_peak_2_hz",
+                "self_fft_peak_3_hz",
             ])
             self.csv_file.flush()
             self.last_csv_write_time = 0.0
@@ -560,6 +644,12 @@ class WaveCoreApp:
                 event["vpp_lsb"],
                 "" if self.latest_peak_s_hz is None else self.latest_peak_s_hz,
                 "" if self.latest_peak_a_hz is None else self.latest_peak_a_hz,
+                "" if self.latest_duty_percent is None else self.latest_duty_percent,
+                "" if self.latest_pulse_width_us is None else self.latest_pulse_width_us,
+                "" if self.latest_waveform_type is None else self.latest_waveform_type,
+                "" if self.latest_self_fft_peaks["SF"] is None else self.latest_self_fft_peaks["SF"],
+                "" if self.latest_self_fft_peaks["S2"] is None else self.latest_self_fft_peaks["S2"],
+                "" if self.latest_self_fft_peaks["S3"] is None else self.latest_self_fft_peaks["S3"],
             ])
             self.csv_file.flush()
             self.last_csv_write_time = now
@@ -607,6 +697,31 @@ class WaveCoreApp:
                     return
                 self.latest_peak_a_hz = event["frequency_hz"]
                 self.peak_a_var.set(f"{event['frequency_hz']} Hz")
+
+        elif event_type == "duty":
+            self.latest_duty_percent = event["duty_percent"]
+            self.latest_pulse_width_us = event["pulse_width_us"]
+            self.duty_var.set(f"{event['duty_percent']:.1f} %")
+            self.pulse_width_var.set(f"{event['pulse_width_us']} us")
+
+        elif event_type == "waveform_type":
+            waveform_names = {0: "方波", 1: "正弦", 2: "三角", 3: "其他"}
+            waveform_type = event["waveform_type"]
+            self.latest_waveform_type = waveform_type
+            self.detected_waveform_var.set(
+                f"{waveform_type}：{waveform_names.get(waveform_type, '未知')}"
+            )
+
+        elif event_type == "self_fft_peak":
+            self.latest_self_fft_peaks[event["name"]] = event["frequency_hz"]
+            values = [
+                self.latest_self_fft_peaks[name]
+                for name in ("SF", "S2", "S3")
+            ]
+            self.self_fft_var.set(
+                " / ".join("--" if value is None else str(value) for value in values)
+                + " Hz"
+            )
 
         elif event_type == "waveform":
             self.latest_waveform_samples = list(event["samples"])

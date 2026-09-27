@@ -3,8 +3,8 @@
 WaveCore串口协议模块
 
 负责：
-1. 生成0x81、0x83、0x85、0x87命令
-2. 解析F/V/S/A文本行
+1. 生成协议v1.15的0x81、0x83、0x85、0x87～0x8B命令
+2. 解析F/V、S/A、D/W、TY、SF/S2/S3文本行
 3. 解析1024点波形帧
 """
 
@@ -19,6 +19,18 @@ MEASUREMENT_PATTERN = re.compile(
 
 PEAK_PATTERN = re.compile(
     rb"^([SA])=(\d{7})$"
+)
+
+DUTY_PATTERN = re.compile(
+    rb"^D=(\d{3}\.\d)% W=(\d{5})us$"
+)
+
+WAVEFORM_TYPE_PATTERN = re.compile(
+    rb"^TY=([0-3])$"
+)
+
+SELF_FFT_PATTERN = re.compile(
+    rb"^(SF|S2|S3)=(\d{7})Hz$"
 )
 
 
@@ -79,6 +91,30 @@ def command_set_second_frequency(hz: int) -> bytes:
     return build_command(0x87, payload)
 
 
+def command_set_waveform(waveform_type: int) -> bytes:
+    """生成0x88波形选择命令：0=正弦，1=方波，2=三角。"""
+    if waveform_type not in (0, 1, 2):
+        raise ValueError("波形类型必须是0、1或2")
+    return build_command(0x88, bytes([waveform_type]))
+
+
+def command_set_trigger(trigger_mode: int) -> bytes:
+    """生成0x89触发模式命令：0=自由，1=上升沿，2=下降沿。"""
+    if trigger_mode not in (0, 1, 2):
+        raise ValueError("触发模式必须是0、1或2")
+    return build_command(0x89, bytes([trigger_mode]))
+
+
+def command_run_self_fft() -> bytes:
+    """生成0x8A自研FFT运行一次命令。"""
+    return build_command(0x8A, b"\x00")
+
+
+def command_set_sweep(enabled: bool) -> bytes:
+    """生成0x8B扫频开关命令。"""
+    return build_command(0x8B, bytes([1 if enabled else 0]))
+
+
 def parse_ascii_line(line: bytes):
     """
     解析FPGA返回的ASCII行。
@@ -103,6 +139,29 @@ def parse_ascii_line(line: bytes):
     if match:
         return {
             "type": "peak",
+            "name": match.group(1).decode("ascii"),
+            "frequency_hz": int(match.group(2)),
+        }
+
+    match = DUTY_PATTERN.fullmatch(line)
+    if match:
+        return {
+            "type": "duty",
+            "duty_percent": float(match.group(1)),
+            "pulse_width_us": int(match.group(2)),
+        }
+
+    match = WAVEFORM_TYPE_PATTERN.fullmatch(line)
+    if match:
+        return {
+            "type": "waveform_type",
+            "waveform_type": int(match.group(1)),
+        }
+
+    match = SELF_FFT_PATTERN.fullmatch(line)
+    if match:
+        return {
+            "type": "self_fft_peak",
             "name": match.group(1).decode("ascii"),
             "frequency_hz": int(match.group(2)),
         }
@@ -310,6 +369,22 @@ def run_self_test():
     )
     assert waveform_command == expected_waveform_command
 
+    assert command_set_waveform(1) == bytes.fromhex(
+        "5A A5 88 00 01 01 8A"
+    )
+    assert command_set_trigger(1) == bytes.fromhex(
+        "5A A5 89 00 01 01 8B"
+    )
+    assert command_run_self_fft() == bytes.fromhex(
+        "5A A5 8A 00 01 00 8B"
+    )
+    assert command_set_sweep(True) == bytes.fromhex(
+        "5A A5 8B 00 01 01 8D"
+    )
+    assert command_set_sweep(False) == bytes.fromhex(
+        "5A A5 8B 00 01 00 8C"
+    )
+
     measurement = parse_ascii_line(
         b"F=0001000Hz V=133\r\n"
     )
@@ -341,6 +416,21 @@ def run_self_test():
         "type": "peak",
         "name": "A",
         "frequency_hz": 1099,
+    }
+
+    assert parse_ascii_line(b"D=050.0% W=00500us\r\n") == {
+        "type": "duty",
+        "duty_percent": 50.0,
+        "pulse_width_us": 500,
+    }
+    assert parse_ascii_line(b"TY=1\r\n") == {
+        "type": "waveform_type",
+        "waveform_type": 1,
+    }
+    assert parse_ascii_line(b"SF=0000976Hz\r\n") == {
+        "type": "self_fft_peak",
+        "name": "SF",
+        "frequency_hz": 976,
     }
 
     print("协议自检全部通过")
