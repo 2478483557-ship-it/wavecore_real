@@ -84,6 +84,7 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 ## 分工与进度
 
 - FPGA 已完成与待办清单、两位队友任务：见 `report/task_overview.md`
+- **设计报告（全文初稿）：`report/design_report.md`**；提交清单：`report/submission_checklist.md`
 - **全队 GitHub 协作规则（工位表/流程/小抄）**：见 `report/collab_guide.md`
 - 里程碑：见 `report/progress_log.md`；获奖对标：`report/benchmark.md`；升级规划：`report/upgrade_plan.md`
 

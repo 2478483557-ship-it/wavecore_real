@@ -2,8 +2,13 @@
 
 ## 内容
 
-- `create_project.tcl` — 一键建工程脚本（他人可复现的关键）
-- 综合 / 实现报告（从 Vivado 导出，整理后提交）
+- `create_project.tcl` — **一键从零复现脚本**（2026-09-27 生成；用法：在 Vivado Tcl Console 里 `source build/create_project.tcl`）
+  - 自动：建工程(xc7a35tfgg484-2) → 拷贝 RTL 并**重写 $readmemh 绝对路径** → 加约束 → 重建 3 个 IP（blk_mem_gen_0/1、xfft_0）
+  - 注意：不重建 ila_0（调试用，交付版已移除）；blk_mem_gen_1 的读延迟口径见 SK-025
+- `reports/` — 综合与实现报告（已从正式工程导出）
+  - `board_top_utilization_placed.rpt`（资源：LUT 95.52% 等）
+  - `board_top_timing_summary_routed.rpt`（时序：WNS +1.277ns）
+  - `util_hier.rpt`（分层资源：各模块 LUT/DSP 明细）
 - 资源占用记录表（下面有模板）
 
 ## 资源占用记录表（每完成一个模块更新一次 —— 评分项"性能与资源优化"20% 的素材）
@@ -19,6 +24,6 @@
 
 ## 复现步骤（暂定，逐步完善）
 
-1. 启动 Vivado 2020.1
+1. 启动 Vivado 2020.2（或更新的兼容版本）
 2. Tcl Console 执行：`source build/create_project.tcl`
-3. 综合 → 实现 → 生成比特流
+3. 综合 → 实现 → 生成比特流（预期资源见 reports/）

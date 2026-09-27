@@ -1,0 +1,71 @@
+Copyright 1986-2020 Xilinx, Inc. All Rights Reserved.
+------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2020.2 (win64) Build 3064766 Wed Nov 18 09:12:45 MST 2020
+| Date         : Sun Sep 20 08:57:49 2026
+| Host         : Dio running 64-bit major release  (build 9200)
+| Command      : report_utilization -hierarchical -hierarchical_depth 2 -file D:/Verilog_project/wavecore/util_hier.rpt
+| Design       : board_top
+| Device       : 7a35tfgg484-2
+| Design State : Synthesized
+------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++------------------+-------------------------+------------+------------+---------+------+-------+--------+--------+------------+
+|     Instance     |          Module         | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs  | RAMB36 | RAMB18 | DSP Blocks |
++------------------+-------------------------+------------+------------+---------+------+-------+--------+--------+------------+
+| board_top        |                   (top) |      20479 |      20167 |       0 |  312 | 38079 |      1 |     16 |         24 |
+|   (board_top)    |                   (top) |        109 |        109 |       0 |    0 |     5 |      0 |      0 |          0 |
+|   u_ad           |               ad_driver |          5 |          5 |       0 |    0 |   521 |      0 |      0 |          0 |
+|   u_cmd          |             cmd_decoder |        126 |        126 |       0 |    0 |   132 |      0 |      0 |          4 |
+|   u_dual         |               dual_tone |         32 |         32 |       0 |    0 |    33 |      0 |      0 |          0 |
+|   u_fft_demo     |                fft_demo |      17564 |      17252 |       0 |  312 | 35558 |      0 |     12 |         12 |
+|     (u_fft_demo) |                fft_demo |      15793 |      15793 |       0 |    0 | 33008 |      0 |      0 |          3 |
+|     u_fft        |                  xfft_0 |       1771 |       1459 |       0 |  312 |  2550 |      0 |     11 |          9 |
+|     u_hann       |                hann_rom |          0 |          0 |       0 |    0 |     0 |      0 |      1 |          0 |
+|   u_fft_rpt      |              fft_report |        207 |        207 |       0 |    0 |   204 |      0 |      0 |          0 |
+|     (u_fft_rpt)  |              fft_report |         53 |         53 |       0 |    0 |    69 |      0 |      0 |          0 |
+|     u_b1         |               bin2bcd_7 |         53 |         53 |       0 |    0 |    59 |      0 |      0 |          0 |
+|     u_b2         |               bin2bcd_8 |         73 |         73 |       0 |    0 |    59 |      0 |      0 |          0 |
+|     u_uart       |               uart_tx_9 |         28 |         28 |       0 |    0 |    17 |      0 |      0 |          0 |
+|   u_freq         |               freq_ctrl |         34 |         34 |       0 |    0 |    36 |      0 |      0 |          0 |
+|   u_key          |            key_debounce |         15 |         15 |       0 |    0 |    24 |      0 |      0 |          0 |
+|   u_meter        |              freq_meter |        744 |        744 |       0 |    0 |   616 |      0 |      0 |          1 |
+|     (u_meter)    |              freq_meter |        509 |        509 |       0 |    0 |   532 |      0 |      0 |          1 |
+|     u_div        |             div_restore |        235 |        235 |       0 |    0 |    84 |      0 |      0 |          0 |
+|   u_mirror       |             uart_mirror |         84 |         84 |       0 |    0 |   116 |      0 |      0 |          0 |
+|     (u_mirror)   |             uart_mirror |          5 |          5 |       0 |    0 |    75 |      0 |      0 |          0 |
+|     u_out        |               uart_tx_5 |         39 |         39 |       0 |    0 |    17 |      0 |      0 |          0 |
+|     u_sniff      |               uart_rx_6 |         40 |         40 |       0 |    0 |    24 |      0 |      0 |          0 |
+|   u_nco          |                 dds_nco |          2 |          2 |       0 |    0 |    32 |      0 |      0 |          0 |
+|   u_nco2         |               dds_nco_0 |          0 |          0 |       0 |    0 |    32 |      0 |      0 |          0 |
+|   u_report       |          measure_report |        638 |        638 |       0 |    0 |   155 |      0 |      0 |          0 |
+|     (u_report)   |          measure_report |        491 |        491 |       0 |    0 |    53 |      0 |      0 |          0 |
+|     u_b2f        |               bin2bcd_3 |         80 |         80 |       0 |    0 |    59 |      0 |      0 |          0 |
+|     u_b2v        | bin2bcd__parameterized0 |         39 |         39 |       0 |    0 |    26 |      0 |      0 |          0 |
+|     u_uart       |               uart_tx_4 |         28 |         28 |       0 |    0 |    17 |      0 |      0 |          0 |
+|   u_rom          |                sine_rom |          0 |          0 |       0 |    0 |     0 |      0 |      1 |          0 |
+|   u_rx           |                 uart_rx |         34 |         34 |       0 |    0 |    24 |      0 |      0 |          0 |
+|   u_rx2          |               uart_rx_1 |         63 |         63 |       0 |    0 |    24 |      0 |      0 |          0 |
+|   u_scfft        |           self_fft_1024 |        502 |        502 |       0 |    0 |   346 |      1 |      2 |          7 |
+|     (u_scfft)    |           self_fft_1024 |        502 |        502 |       0 |    0 |   346 |      0 |      0 |          7 |
+|     u_mem        |           blk_mem_gen_1 |          0 |          0 |       0 |    0 |     0 |      1 |      0 |          0 |
+|     u_tw         |             twiddle_rom |          0 |          0 |       0 |    0 |     0 |      0 |      2 |          0 |
+|   u_sfrpt        |         self_fft_report |        107 |        107 |       0 |    0 |    95 |      0 |      0 |          0 |
+|     (u_sfrpt)    |         self_fft_report |         10 |         10 |       0 |    0 |    19 |      0 |      0 |          0 |
+|     u_b2f        |                 bin2bcd |         65 |         65 |       0 |    0 |    59 |      0 |      0 |          0 |
+|     u_uart       |               uart_tx_2 |         32 |         32 |       0 |    0 |    17 |      0 |      0 |          0 |
+|   u_wave         |              wave_frame |        213 |        213 |       0 |    0 |   126 |      0 |      1 |          0 |
+|     (u_wave)     |              wave_frame |        175 |        175 |       0 |    0 |   109 |      0 |      0 |          0 |
+|     u_bmg        |           blk_mem_gen_0 |          0 |          0 |       0 |    0 |     0 |      0 |      1 |          0 |
+|     u_uart       |                 uart_tx |         38 |         38 |       0 |    0 |    17 |      0 |      0 |          0 |
++------------------+-------------------------+------------+------------+---------+------+-------+--------+--------+------------+
+
+
