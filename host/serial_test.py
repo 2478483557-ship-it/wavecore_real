@@ -14,7 +14,7 @@ from protocol import (
 )
 
 
-BAUD_RATE = 115200
+BAUD_RATE = 460800
 DEFAULT_TEST_FREQUENCY_HZ = 37_500
 
 
@@ -112,6 +112,24 @@ def print_event(event):
 
         print(
             f"[频谱] {name} {description}="
+            f"{event['frequency_hz']} Hz"
+        )
+
+    elif event_type == "duty":
+        print(
+            "[时域] "
+            f"D={event['duty_percent']:.1f}%  "
+            f"W={event['pulse_width_us']} us"
+        )
+
+    elif event_type == "waveform_type":
+        names = {0: "方波", 1: "正弦", 2: "三角", 3: "其他"}
+        value = event["waveform_type"]
+        print(f"[识别] TY={value} {names.get(value, '未知')}")
+
+    elif event_type == "self_fft_peak":
+        print(
+            f"[自研FFT] {event['name']}="
             f"{event['frequency_hz']} Hz"
         )
 

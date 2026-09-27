@@ -6,9 +6,12 @@
 
 - 自动识别CH340串口，460800-8N1连接(v1.8 提速)。
 - 实时显示测量频率F、Vpp原始计数、FFT主峰S和第二峰A。
+- 显示占空比D、脉宽W、波形自动识别TY和自研FFT三峰SF/S2/S3。
 - 发送0x85设置1～12500000 Hz主频。
 - 发送0x87开启第二频率，支持双音测试。
 - 发送0x81切换100 kHz、200 kHz、500 kHz和1 MHz预设档位。
+- 发送0x88切换正弦、方波和三角波，发送0x89选择自由、上升沿或下降沿触发。
+- 发送0x8A运行一次自研FFT，发送0x8B开始或停止1～20 kHz扫频。
 - 发送0x83请求1024点、50 kHz采样波形并在界面中绘制。
 - 测量结果记录为CSV，最多10行/秒。
 - 导出当前1024点波形CSV。
@@ -61,7 +64,7 @@ python wavecore_gui.py
 实时测量CSV列：
 
 ```text
-timestamp,frequency_hz,vpp_lsb,peak_s_hz,peak_a_hz
+timestamp,frequency_hz,vpp_lsb,peak_s_hz,peak_a_hz,duty_percent,pulse_width_us,waveform_type,self_fft_peak_1_hz,self_fft_peak_2_hz,self_fft_peak_3_hz
 ```
 
 波形CSV列：
@@ -114,4 +117,4 @@ python hardware_smoke_test.py COM4
 - 中文终端乱码：先执行 `chcp 65001`。
 - 波形请求失败：确认固件支持0x83，并关闭其他串口程序。
 - 脚本"秒退无输出"：检查脚本文件是否被写坏成 0 字节（用 dir 看大小）。
-- 固件 **v1.15** 新增：D=/W=（占空比/脉宽）、**TY=0/1/2/3（波形识别）**、**SF=/S2=/S3=（自研FFT三峰）**、**0x8B 扫频**——GUI 可逐步接入；**Spectrogram（频谱瀑布）只需逐帧采 S/A**。
+- 固件 **v1.15** 的 D=/W=、TY=、SF/S2/S3=、0x88/0x89/0x8A/0x8B 已接入GUI；Spectrogram（频谱瀑布）可继续使用逐帧S/A作为加分项。
