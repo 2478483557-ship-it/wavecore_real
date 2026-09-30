@@ -15,12 +15,13 @@
 | 2026-09-30 | vpp_mv（LSB→mV）| 11 个硬编码期望点，含饱和/0 边界 | **11/11 PASS** | `mv_check/xsim_unit.log` |
 | 2026-09-30 | measure_report v3.3（46 字节整帧）| S0 首帧暖机 / S1 默认标定 / S2 原始LSB / S3 大数 / S4 TY 闸门活性 | **全 PASS**，逐字节一致（46B）| `mv_check/xsim_report.log` |
 | 2026-09-30 | cmd_decoder 0x8C（电压标定）| 发 KN=1024 再发 KN=8000，查 cal_load/cal_kn | **自检通过**：cal_load=2 次、cal_kn=8000 落地 | `mv_check/xsim_cmd.log` |
+| 2026-09-30 | self_fft_1024（**加 Hann 窗 + 补非整数 bin 场景**）| **5 场景**：方波 / 正弦 / 双音2bin / 双音80bin / **正弦 20.5 周期（非整数 bin）** | ⏳ **xvlog/xelab 已通过、快照已生成**；`xsim` 执行环节本机挂死，待**双击 `fft_check/run_fft_check.bat`** 跑（应得 `PASS=5 FAIL=0`）| `fft_check/` |
 | 2026-09-30 | fft_demo（**LUT 瘦身等价性**）| 用 `xfft_0` 行为替身收样点打滚动校验和，改动前后各跑一遍逐字节比对 | ⏳ **xvlog/xelab 已通过；xsim 执行环节本机挂死，待用户本机跑** | `fft_demo_check/` |
 
 ## 命令行批量回归（不用开 GUI，推荐）
 
 ```bash
-bash sim/fft_check/run_fft_check.sh      # self_fft_1024 三峰判据（4 场景）
+bash sim/fft_check/run_fft_check.sh      # self_fft_1024 三峰判据（5 场景, 含非整数 bin）
 bash sim/mv_check/run_mv_check.sh        # vpp_mv 换算 + 46 字节整帧 + 0x8C 命令
 bash sim/fft_demo_check/run_equiv.sh     # fft_demo 改块RAM 前后"样点流等价"比对
 ```
@@ -29,6 +30,31 @@ bash sim/fft_demo_check/run_equiv.sh     # fft_demo 改块RAM 前后"样点流�
 `sim/fft_check/run_fft_check.bat`、`sim/fft_demo_check/run_equiv.bat`
 （`.bat` 内部用 `set PATH=D:\Xilinx\Vivado\2020.2\bin;%PATH%` 调 `xvlog.bat`/`xelab.bat`/`xsim.bat`，
 已验证 xvlog/xelab 两步可用）。
+
+### `fft_check` 的 5 个场景与判据（2026-09-30 更新，**必须看懂再改期望值**）
+
+| # | 场景 | 激励 | 判据 | 期望 |
+|---|---|---|---|---|
+| A | 方波 20 周期 | `sq20.hex` | **严格**（三个数逐字相符）| `976 / 2929 / 4882` |
+| B | 正弦 20 周期 | `sin20.hex` | **严格** | `976 / 0 / 0`（单峰）|
+| C | 双音 20+22 周期（相隔 2 bin）| `dual20_22.hex` | **单峰 + SF 容差 ±80Hz** | `S2=S3=0`，SF 允许 976/1024/1074 |
+| D | 双音 20+100 周期（相隔 80 bin）| `dual20_100.hex` | **集合相等** `{SF,S2}={976,4882}`，`S3=0` | 两个峰都报出来，不指定谁第一 |
+| E | 正弦 **20.5** 周期（**非整数 bin**）| `sin20p5.hex` | **单峰 + SF 容差 ±60Hz** | `S2=S3=0`（假峰回归项）|
+
+为什么 C/D 的判据要这么写（**不是被测设计变差，是原来的判据太脆**）：
+
+- **C**：两个音只隔 2 bin，加 Hann 窗后主瓣糊成一团，bin20/21/22 幅度只差 0.1%，
+  峰值 bin 由取整噪声决定 → 判据钉死在 `1002±60` 就会随机翻车。
+- **D**：两个音**等幅**，谁排第一本来就是"并列"（数值模型实测只差 0.09%），
+  改窗后次序会翻 → 判据必须是"集合相等"，不能指定谁当 SF。
+
+> **E 是这次新增的重点**。原来 4 张表全是"整数个周期"，而矩形窗在整数 bin 处泄漏**恰好为 0**，
+> 所以板上那个假峰（`S2=1171` = bin24）在仿真里**永远抓不到**（SK-034）。
+> 补上非整数 bin 后，板上的 bug 变成了**永久回归项**。
+>
+> **顺手做一次负向对照**：把 `tb_self_fft.v` 里 `.USE_HANN(1'b1)` 改成 `1'b0` 重新跑，
+> 场景 E 应当报出 `S2=1171`（bin24）—— 如果它**不**报，说明这个测试根本抓不到那个 bug，
+> 那"5 场景全绿"就没有意义。（一个永远不会失败的测试等于没有测试。）
 
 > `.bat` 里的提示文字**故意全用英文**：Windows 的 cmd 按 GBK 读批处理文件，
 > 中文如果出现在 `if (...)` 块或 `set` 语句里，会被误解码成乱码甚至让脚本报错跑不起来。

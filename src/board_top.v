@@ -117,6 +117,13 @@ module board_top (
     wire [7:0] cmd_byte = rx2_done ? rx2_byte : rx_byte;
     wire       cmd_done = rx_done | rx2_done;
 
+    // ---- 0.7b 命令解码输出线(先声明、后使用: 它们接在下面 cmd_decoder 的输出端口上) ----
+    // ★ wave_sel_w / trig_mode_w 是 **2 位**。声明若写在文件后部, Verilog 会先按
+    //   "隐式 1 位线网"建网, 端口位宽就对不上(靠工具宽容才没坏), 必须放在使用之前。
+    wire       wave_req_w;     // 0x83 波形帧请求
+    wire [1:0] wave_sel_w;     // 0x88 波形选择
+    wire [1:0] trig_mode_w;    // 0x89 触发模式
+
     cmd_decoder u_cmd (
         .clk         (sys_clk     ),
         .rst_n       (sys_rst_n   ),
@@ -184,9 +191,19 @@ module board_top (
     // ---- 2.7 波形选择(F5, 0x88): 0=正弦 1=方波 2=三角 ----
     wire [7:0] tri_a = {1'b0, (rom_addr[7]  ? (8'd255 - rom_addr[7:0])  : rom_addr[7:0])}  << 1;
     wire [7:0] tri_b = {1'b0, (rom_addr2[7] ? (8'd255 - rom_addr2[7:0]) : rom_addr2[7:0])} << 1;
-    wire [7:0] wave_a = (wave_sel_w == 2'd1) ? (rom_addr[7]  ? 8'd26 : 8'd230) :   // 方波
+    // [09-30 修复] 方波电平原为写死的 26 / 230 (Vpp 204 LSB), 而正弦(sine_256.hex)
+    //   是 1 / 255、三角是 0 / 254 (Vpp 254 LSB)。于是同一块板子上三种波形测出的
+    //   Vpp 不一样(实测正弦 V=1085mV、方波 V=0882mV, 比值 0.813 与数字比 204/254=0.803 吻合),
+    //   演示/答辩时会被当成"幅度不准"。
+    //   现统一为与正弦完全相同的 1 / 255 (Vpp 254 LSB), 中点都还是 128。
+    //   影响面已核对:
+    //     - wave_id 波形识别: 全程用 mn/mx/span 归一化, **与绝对幅度无关**, 不受影响;
+    //     - 占空比/脉宽: 看的是跳变位置, 与幅度无关;
+    //     - 自研FFT 的 SF/S2/S3(bin20/61/102): 数值模型验证过, **一个数都没变**;
+    //     - 双音合成 {1'b0,wave[7:1]} 相加: 255>>1=127, 127+127=254, 不会溢出。
+    wire [7:0] wave_a = (wave_sel_w == 2'd1) ? (rom_addr[7]  ? 8'd1 : 8'd255) :   // 方波
                         (wave_sel_w == 2'd2) ? tri_a : sine;
-    wire [7:0] wave_b = (wave_sel_w == 2'd1) ? (rom_addr2[7] ? 8'd26 : 8'd230) :
+    wire [7:0] wave_b = (wave_sel_w == 2'd1) ? (rom_addr2[7] ? 8'd1 : 8'd255) :
                         (wave_sel_w == 2'd2) ? tri_b : sine2;
     // 双音合成(对整形后的波形)
     assign sine_out = dual_on ? {1'b0, wave_a[7:1]} + {1'b0, wave_b[7:1]} : wave_a;
@@ -208,6 +225,16 @@ module board_top (
         .ad_cap    (ad_cap   )
     );
 
+    // ---- 3.55 调试观察信号(专供 ILA) ----
+    // ★ 这 4 根 wire 要接到下面 3.6 / 3.7 段模块的 .dbg_* 端口上, 所以**必须在这里声明**。
+    //   千万不要挪到文件后部的 ILA 段去 —— 位置在使用之后 = Verilog 先建"隐式 1 位线网",
+    //   后面再写显式声明就是重复声明, 而且 3 位端口接到 1 位线网上高位会悬空
+    //   (xvlog 会报 `VRFC 10-2938 'x' is already implicitly declared`)。
+    wire [2:0]  meter_dbg_st;     // freq_meter 内部 FSM 状态
+    wire [7:0]  meas_dbg_fsm;     // measure_report 内部 FSM 状态
+    wire [31:0] meter_h_tick;     // freq_meter 的闸门/测周计数
+    wire [31:0] meter_p_tick;     // measure_report 的脉宽计数
+
     // ---- 3.6 频率计 v2: 自动双模式(闸门/测周), 直接出 Hz ----
     freq_meter u_meter (
         .clk        (sys_clk    ),
@@ -223,6 +250,11 @@ module board_top (
         .dbg_h_tick (meter_h_tick),
         .dbg_p_tick (meter_p_tick)
     );
+
+    // ---- 3.65 上报占用 / 波形暂停标志(先声明、后使用) ----
+    wire        m_txd;           // 测量行 TX
+    wire        m_busy;          // 测量行忙标志
+    wire        wav_hold;        // 波形上传期间让测量/谱峰暂停
 
     // ---- 3.7 测量结果经串口上报: "F=xxxxxxxHz V=xxxx" (V 为 mV) ----
     measure_report u_report (
@@ -262,8 +294,7 @@ module board_top (
     // ---- 3.9 FFT 谱峰频率串口上报(B3): "S=xxxxxxxHz" ----
     wire        fft_txd;         // FFT 行 TX
     wire        fft_act;         // FFT 行占用标志
-    wire        m_txd;           // 测量行 TX
-    wire        m_busy;          // 测量行忙标志
+    // m_txd / m_busy 的声明已上移到 3.65 段(必须先声明后使用)
     fft_report u_fft_rpt (
         .clk        (sys_clk    ),
         .rst_n      (sys_rst_n ),
@@ -277,12 +308,10 @@ module board_top (
         .ext_hold   (wav_hold | sf_act_w)
     );
     // ---- 3.10 波形帧上传(F2-A): 0x83 请求 -> 传 1024 点(50kHz) ----
-    wire        wave_req_w;    // 0x83 请求
-    wire [1:0]  wave_sel_w;    // 0x88 波形选择
-    wire [1:0]  trig_mode_w;   // 0x89 触发模式
+    // wave_req_w / wave_sel_w / trig_mode_w 的声明已上移到 0.7b 段;
+    // wav_hold 的声明已上移到 3.65 段(都必须先声明后使用)
     wire        wav_txd;       // 波形 TX
     wire        wav_act;       // 波形占用标志
-    wire        wav_hold;      // 让测量/谱峰暂停
     wave_frame u_wave (
         .clk        (sys_clk   ),
         .rst_n      (sys_rst_n ),
@@ -341,16 +370,32 @@ module board_top (
     );
 
     // ---- 4. ILA 片上逻辑分析仪(调试观察用) ----
-    // [09-16 临时禁用 ILA: 布局余量不足; 功能验证后可再开]
-    wire [2:0] meter_dbg_st;
-    wire [7:0] meas_dbg_fsm;
-    wire [31:0] meter_h_tick;
-    wire [31:0] meter_p_tick;
-    //ila_0 u_ila (
-    //    .clk    (sys_clk       ),
-    //    .probe0 ({5'b0, meter_dbg_st}),
-    //    .probe1 (meas_dbg_fsm  ),
-    //    .probe2 ({7'b0, wav_hold})
-    //);
+    // [09-16 临时禁用: 布局余量不足(当时 LUT 超容)]
+    // [09-30 重新打开: 资源攻坚后 LUT 只占 24.60%、BRAM 20%、DSP 30%, 余量充足。
+    //                  见 report/lut_slim_report.md / report/resource_compare.md]
+    //
+    // ★ 一键开关: 把 ILA_EN 改成 1'b0 重新综合 = 退回"无 ILA 版"(09-30 之前的状态)。
+    //   注意 1'b0 时整块 ILA **连同它的调试桥(dbg_hub)一起被 generate 掉**, 资源占用回到
+    //   与"无 ILA 版"完全一致 —— 也就是说这个开关是零代价的。
+    //   最终提交版若要把资源压到极致, 改成 1'b0 即可(功能一行都不受影响)。
+    //
+    // 探针口径(与 ILA IP 里配的 3 个 probe 均为 8 位对齐):
+    //   probe0 = {5'b0, meter_dbg_st}  频率计的 FSM 状态(0~7)
+    //   probe1 = meas_dbg_fsm          上报模块的 FSM 状态
+    //   probe2 = {7'b0, wav_hold}      波形上传期间的"暂停测量"标志
+    //   (wav_hold 已在上面 3.10 段声明, 这里不再重复声明)
+    localparam ILA_EN = 1'b1;
+    // ★ 被观察的 4 根 wire 已在上方 **3.55 段**声明(必须在使用前), 这里**不要再声明一遍**,
+    //   否则就是"隐式声明 + 显式声明"的重复声明, 且端口位宽会截断。
+    generate
+        if (ILA_EN) begin : g_ila
+            ila_0 u_ila (
+                .clk    (sys_clk             ),
+                .probe0 ({5'b0, meter_dbg_st}),
+                .probe1 (meas_dbg_fsm        ),
+                .probe2 ({7'b0, wav_hold}    )
+            );
+        end
+    endgenerate
 
 endmodule

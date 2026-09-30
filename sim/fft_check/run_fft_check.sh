@@ -11,13 +11,25 @@ cd "$(dirname "$0")"
 
 echo "[0/4] 同步被测源码 (以仓库 src/ 为准)"
 cp -f ../../src/self_fft_1024.v ./self_fft_1024.v
+cp -f ../../src/hann_rom.v     ./hann_rom.v
+
+# ---- 窗表一致性断言(2026-09-30 加 Hann 窗后新增) --------------------------
+# hann_rom.v 里写的是 $readmemh("D:/Verilog_project/wavecore/src/hann_1024.hex", ...)
+# 即**工程绝对路径**。如果工程里那份和仓库 src/ 那份不一样, 仿真就是在拿另一张
+# 表做验证 —— 结论看着对, 其实测的不是仓库里的代码(SK-024 的坑)。
+if ! cmp -s ../../src/hann_1024.hex /d/Verilog_project/wavecore/src/hann_1024.hex; then
+  echo "[错误] 工程的 hann_1024.hex 与仓库 src/ 不一致!"
+  echo "       先跑: python hw_analysis\sync_src_gbk.py  再重跑本脚本"
+  exit 1
+fi
+echo "       窗表一致性: OK (仓库 src/ == 工程 src/)"
 
 echo "[1/4] 生成激励表"
 "C:/Users/Lenovo/.workbuddy/binaries/python/versions/3.13.12/python.exe" gen_tables.py
 
 echo "[2/4] 编译"
 rm -rf xsim.dir work
-xvlog self_fft_1024.v twiddle_rom.v blk_mem_gen_1.v tb_self_fft.v 2>&1 | tee xvlog.log
+xvlog self_fft_1024.v hann_rom.v twiddle_rom.v blk_mem_gen_1.v tb_self_fft.v 2>&1 | tee xvlog.log
 
 echo "[3/4] 精化"
 xelab tb_self_fft -s tb_sim -timescale 1ns/1ps 2>&1 | tee xelab.log

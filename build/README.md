@@ -6,8 +6,8 @@
   - 自动：建工程(xc7a35tfgg484-2) → 拷贝 RTL 并**重写 $readmemh 绝对路径** → 加约束 → 重建 3 个 IP（blk_mem_gen_0/1、xfft_0）
   - 注意：不重建 ila_0（调试用，交付版已移除）；blk_mem_gen_1 的读延迟口径见 SK-025
 - `reports/` — 综合与实现报告（已从正式工程导出）
-  - `board_top_utilization_placed.rpt`（资源：LUT 24.60% / FF 11.62% / BRAM 20% / DSP 30%）
-  - `board_top_timing_summary_routed.rpt`（时序：WNS +1.689ns）
+  - `board_top_utilization_placed.rpt`（资源：LUT 30.54% / FF 16.35% / BRAM 22% / DSP 31.11%）
+  - `board_top_timing_summary_routed.rpt`（时序：WNS +2.385ns）
   - `util_hier.rpt`（分层资源：各模块 LUT/DSP 明细）
 - 资源占用记录表（下面有模板）
 

@@ -38,7 +38,7 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 | 7 | 占空比 + 脉宽 | 计窗统计+施密特+5点中值+**3窗中值平滑**；由测量帧第二行输出 `D=/W=` | 方波1k/100k：49.9~50.4%、500us/6us ✅ |
 | 8 | 波形整形(0x88) | 正弦/方波/三角 一键切换 | 方波全链路验证 ✅ |
 | 9 | 触发采集(0x89) | 自由/上升沿/下降沿；帧首点=触发点 | B(上升)前6点全高 / C(下降)全低 ✅ |
-| 10 | 资源与时序 | 大表全部 BRAM；**LUT 24.60% / FF 11.62% / BRAM 20.0% / DSP 30.0%**；**WNS +1.689ns** 全收敛（资源攻坚前 LUT 100.14% 超容） | 布局通过 ✅ |
+| 10 | 资源与时序 | 大表全部 BRAM；**LUT 30.54% / FF 16.35% / BRAM 22.0% / DSP 31.11%**；**WNS +2.385ns** 全收敛（资源攻坚前 LUT 100.14% 超容） | 布局通过 ✅ |
 | 11 | 自研FFT(对比) | 1024点 DIF，`0x8A` 按需运行回 **SF=/S2=/S3= 三峰行**；[资源对比表](report/resource_compare.md)：**502 LUT/7 DSP** vs IP 1771 LUT/9 DSP | 正弦 `976/0/0`、方波 `976/2978/4980`（bin20/61/102，逐字命中模型）✅ |
 | 12 | **波形自动识别**(9/20) | 占比法识别 方波/正弦/三角；输出 `TY=` 行（含可信闸门）| ✅ 五场景全对（1k正弦/方波/三角 + 混叠/双音报3）|
 | 13 | **扫频模式**(9/20) | `0x8B` 开关；1k→20k/100Hz步/50ms，循环 | ✅ 上板验证（瀑布图待上位机实现，见 backlog #2）|
@@ -101,14 +101,14 @@ wavecore/
 ├── board/             # 上板：XDC、引脚表、串口协议 v1.17、实测记录、样例日志、flash_guide.md
 ├── host/              # 上位机(队友1 工位: serial_monitor_starter.py / wave_plot_example.py)
 ├── stm32/             # STM32+串口屏 资料归档（9/20 屏方案取消，F1 转发口保留）
-├── skill/             # 技能包 SK-001~035（抗噪/触发/FFT四坑/固化/文档一致性等，含 Golden 案例）
+├── skill/             # 技能包 SK-001~037（抗噪/触发/FFT四坑/固化/资源判读/文档一致性/提交体检/回归期望值等，含 Golden 案例）
 └── report/            # 进度/任务书/协作须知/对标/升级/LLM记录/战报/自研FFT档案/backlog
 ```
 
 ## How to Reproduce / 复现步骤
 
 1. Vivado 2020.2 打开 `D:/Verilog_project/wavecore/wavecore.xpr`（或 tcl 重建，见 `build/`）
-2. Add Sources：`src/*.v`；IP：`xfft_0`(4096点FFT)、`blk_mem_gen_0`(1024×8 波形缓存)。`ila_0` 默认已移除(资源)；自研FFT(`self_fft_*`/`twiddle_rom`/`blk_mem_gen_1`)默认不加入（存档）
+2. Add Sources：`src/*.v`；IP：`xfft_0`(4096点FFT)、`blk_mem_gen_0`(1024×8 波形缓存)。`ila_0` **已重新启用**（资源攻坚后余量充足；`board_top.v` 的 `ILA_EN` 改 `1'b0` 即可一键关掉）；自研FFT(`self_fft_1024`/`self_fft_report`/`twiddle_rom`/`blk_mem_gen_1`/`hann_rom`)已加入
 3. 约束用 `board/wavecore.xdc`（含 uart_rxd=E14）
 4. 综合→实现→bitstream→Program Device；按"怎么玩"3 步验证
 

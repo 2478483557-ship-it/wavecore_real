@@ -230,12 +230,17 @@ module fft_demo #(
                     end
                 end
                 if (m_data_tlast) begin
-                    fft_hz  <= ((peak_bin * 16'd50000) + 12'd2048) >> 12;
+                    // [09-30 深夜 BUGFIX] 原来写 16'd50000 / 12'd2048 —— 按 Verilog 位宽规则
+                    //   该式被提升到左值 fft_hz 的 24 位, 于是 bin>=336 (4101Hz) 起静默溢出,
+                    //   读数恰好偏 -16384Hz。改成 32 位后 4095*50000=204,750,000 不再溢出。
+                    //   证据: hw_analysis/check_self_fft_overflow.py
+                    fft_hz  <= ((peak_bin * 32'd50000) + 32'd2048) >> 12;
                     fft_done <= 1'b1;
                     // 第二峰门限: 幅度≥主峰1/8 且 相隔>2 (方波3次谐波≈1/3~1/4 稳定通过)
                     if (sec_bin != 14'd0 && sec_mag >= {3'b0, peak_mag[17:3]} &&
                         (sec_bin > peak_bin + 14'd2 || sec_bin + 14'd2 < peak_bin)) begin
-                        fft_hz2  <= ((sec_bin * 16'd50000) + 12'd2048) >> 12;
+                        // [09-30 深夜 BUGFIX] 同上, 32 位防溢出
+                        fft_hz2  <= ((sec_bin * 32'd50000) + 32'd2048) >> 12;
                         fft_done2 <= 1'b1;
                     end
                     bin_cnt  <= 14'd0;
