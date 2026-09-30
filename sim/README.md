@@ -11,6 +11,44 @@
 | 日期 | 模块 | 仿真内容 | 结果 | 截图/日志 |
 |------|------|----------|------|-----------|
 | 2026-09-27 | cmd_decoder（整链路 tx→rx→decoder）| 发送 0x85/0x8A/0x8B 三帧，校验解析与自检 | **自检通过**：arb_load fcw=85899(0x14F8B) 精确、sf_run 触发、sweep_en=1；$finish@523µs | sim_console.png + sim_wave108.png（待用户截图存入本目录）|
+| 2026-09-28 | self_fft_1024（三峰判据）| 4 场景：方波 / 正弦 / 双音2bin / 双音80bin | **PASS=4 FAIL=0**：A 976/2929/4882、B 976/0/0、C 976/0/0、D 976/4882/0 | `fft_check/xsim_run.log` |
+| 2026-09-30 | vpp_mv（LSB→mV）| 11 个硬编码期望点，含饱和/0 边界 | **11/11 PASS** | `mv_check/xsim_unit.log` |
+| 2026-09-30 | measure_report v3.3（46 字节整帧）| S0 首帧暖机 / S1 默认标定 / S2 原始LSB / S3 大数 / S4 TY 闸门活性 | **全 PASS**，逐字节一致（46B）| `mv_check/xsim_report.log` |
+| 2026-09-30 | cmd_decoder 0x8C（电压标定）| 发 KN=1024 再发 KN=8000，查 cal_load/cal_kn | **自检通过**：cal_load=2 次、cal_kn=8000 落地 | `mv_check/xsim_cmd.log` |
+| 2026-09-30 | fft_demo（**LUT 瘦身等价性**）| 用 `xfft_0` 行为替身收样点打滚动校验和，改动前后各跑一遍逐字节比对 | ⏳ **xvlog/xelab 已通过；xsim 执行环节本机挂死，待用户本机跑** | `fft_demo_check/` |
+
+## 命令行批量回归（不用开 GUI，推荐）
+
+```bash
+bash sim/fft_check/run_fft_check.sh      # self_fft_1024 三峰判据（4 场景）
+bash sim/mv_check/run_mv_check.sh        # vpp_mv 换算 + 46 字节整帧 + 0x8C 命令
+bash sim/fft_demo_check/run_equiv.sh     # fft_demo 改块RAM 前后"样点流等价"比对
+```
+
+**不想开命令行？** 这三个都有对应的 `.bat`，**直接双击**即可：
+`sim/fft_check/run_fft_check.bat`、`sim/fft_demo_check/run_equiv.bat`
+（`.bat` 内部用 `set PATH=D:\Xilinx\Vivado\2020.2\bin;%PATH%` 调 `xvlog.bat`/`xelab.bat`/`xsim.bat`，
+已验证 xvlog/xelab 两步可用）。
+
+> `.bat` 里的提示文字**故意全用英文**：Windows 的 cmd 按 GBK 读批处理文件，
+> 中文如果出现在 `if (...)` 块或 `set` 语句里，会被误解码成乱码甚至让脚本报错跑不起来。
+> 中文说明统一放 `report/新手操作指南.md`。
+
+两者都是"直接调 `unwrapped/win64.o/*.exe`"的纯命令行流程，环境变量在各目录的 `xenv.sh`。
+**注意 PATH 里必须写 `/d/...` 形式**，写 `D:/...` 会被 MSYS 当路径分隔符切坏。
+
+> ⚠️ **已知环境问题（2026-09-30）**：`xsim <snapshot> -R` 在受限的执行环境里会**无输出挂死**
+> （连 09-28 跑通过的旧快照也一样挂）。此时 `xvlog`/`xelab` 仍可用（能验语法与端口），
+> 但要真跑波形得把 `tb_*.v` 加进工程用 GUI 的 Run Simulation。
+> 判据与处置见 `board/vivado_gui_troubleshoot.md` 第六节。
+> **纪律：不能把"只过了 xvlog/xelab"说成"仿真通过"。**
+>
+> **2026-09-30 11:50 补充（更坏的情况）**：本次连"放行沙箱"也救不回来 ——
+> 用一个 `initial $display("HELLO"); $finish;` 的**最小设计**做空白对照，
+> 在 90 秒内**零输出挂死**（`-R` / `-t run.tcl` / `--nolog` / `--nosignalhandlers` /
+> 关 webtalk（`XILINX_LOCAL_USER_DATA=no`）全试过，`xsim.log` 只写到头部就断）。
+> 说明**问题出在 xsim 自身，不是 testbench**。
+> **诊断口诀：仿真挂死时，先用最小设计跑一遍 —— 最小设计也挂 = 环境问题，别再改 RTL 猜。**
 
 ## 一键运行（推荐）
 

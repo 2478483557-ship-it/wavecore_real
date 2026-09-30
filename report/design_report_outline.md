@@ -12,7 +12,7 @@
 - 我们的创新点（9/20 定版）：
   1. **一机集成**：信号源+测量+频谱+采集/触发，四台仪器并行共跑
   2. **自研 1024 点 FFT 与厂商 IP 同板对比**（report/resource_compare.md）＋波形自动识别/扫频
-  3. 工程方法论（"复现硬件式仿真"排障闭环＋28 条技能包）
+  3. 工程方法论（"复现硬件式仿真"排障闭环＋35 条技能包）
 - **（9/20 进展：素材齐备——见 backlog.md A 区 / resource_compare.md / engineering_challenges.md；本节待润色成稿）**
 
 ## 二、设计原理与功能框图
@@ -59,4 +59,4 @@
   2. Artix-7 器件在 2020.2 中支持完备，功能实现无差异
   3. 提供 tcl 构建脚本保证可复现性（`build/create_project.tcl`），版本不影响他人复现
   4. （可选）后期验证新版兼容性，若兼容则升级并在报告中补充对比
-- **（9/20 进展：复现步骤见 README「How to Reproduce」与 board/flash_guide.md；LLM 纠错轨迹=技能包 28 条；本节待整合成稿）**
+- **（9/20 进展：复现步骤见 README「How to Reproduce」与 board/flash_guide.md；LLM 纠错轨迹=技能包 35 条；本节待整合成稿）**

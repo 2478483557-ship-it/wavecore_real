@@ -45,3 +45,21 @@ __pycache__/
 *.tmp
 .idea/
 .vscode/
+
+# ============ 09-30 补充：XSim 仿真运行产物（编译库 / 二进制归档 / 日志 dump）============
+# 起因：sim/fft_check、sim/mv_check、sim/fft_demo_check 三个仿真目录首次入库时，
+# 会把 xsim.dir/（含 xsimk.exe 二进制）、*.pb（Vivado 二进制归档）、xenv.sh
+# 以及 xvlog/xelab 的输出 dump 一起带上 —— 全是可在本机重新生成的垃圾。
+xsim.dir/
+xenv.sh
+*.pb
+diag.txt
+listing.txt
+tools.txt
+xvlog_out.txt
+
+# 09-30 补充：误克隆的嵌套仓库
+# wavecore/wavecore/ 是一个 remote 指向旧地址（.../wavecore.git，
+# 本仓库实际是 .../wavecore_real.git）的残留 clone，只有 1 个 "Initial commit"。
+# 不加这条，git 会把它当作"嵌套仓库"提交成一个没有 .gitmodules 的死链接。
+/wavecore/

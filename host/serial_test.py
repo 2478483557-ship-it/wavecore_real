@@ -103,7 +103,7 @@ def print_event(event):
         print(
             "[测量] "
             f"F={event['frequency_hz']} Hz  "
-            f"Vpp={event['vpp_lsb']} LSB"
+            f"Vpp={event['vpp_mv']} mV"
         )
 
     elif event_type == "peak":

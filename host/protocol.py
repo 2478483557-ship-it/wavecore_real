@@ -3,9 +3,14 @@
 WaveCore串口协议模块
 
 负责：
-1. 生成协议v1.15的0x81、0x83、0x85、0x87～0x8B命令
+1. 生成协议v1.17的0x81、0x83、0x85、0x87～0x8C命令
 2. 解析F/V、S/A、D/W、TY、SF/S2/S3文本行
 3. 解析1024点波形帧
+
+v1.17 变更(2026-09-30, **文本行有破坏性改动**):
+  - `V=` 字段由 3 位 ADC 计数(LSB) 改成 **4 位毫伏(mV)**: `F=0001000Hz V=1085`
+  - 配套新增 0x8C 电压标定命令
+  - 解析结果里的键名 `vpp_lsb` -> `vpp_mv`(单位变了, 名字必须跟着变, 否则会静默算错)
 """
 
 import re
@@ -14,7 +19,7 @@ import re
 FRAME_HEADER = b"\x5A\xA5"
 
 MEASUREMENT_PATTERN = re.compile(
-    rb"^F=(\d{7})Hz V=(\d{3})$"
+    rb"^F=(\d{7})Hz V=(\d{4})$"
 )
 
 PEAK_PATTERN = re.compile(
@@ -115,13 +120,37 @@ def command_set_sweep(enabled: bool) -> bytes:
     return build_command(0x8B, bytes([1 if enabled else 0]))
 
 
+# Vpp 标定的默认值: 7.8125 mV/LSB x1024
+DEFAULT_VPP_KN = 8000
+# 把 KN 设成这个值, 上报的 V 字段就是**原始 ADC 计数** (1024>>10 = 1)
+RAW_LSB_KN = 1024
+
+
+def command_set_vpp_cal(kn: int = DEFAULT_VPP_KN) -> bytes:
+    """
+    生成0x8C电压标定命令。
+
+    kn = 每 LSB 对应多少 mV, 放大 1024 倍取整(Q10定标)。
+      - 默认 8000  -> 7.8125 mV/LSB, 按 0~2V 量程显示
+      - 传 1024    -> "原始 LSB 透传模式", 上报的 V 就是 ADC 计数, 专供标定用
+
+    标定流程(两点法):
+      1. 发 command_set_vpp_cal(RAW_LSB_KN), 记下 V 字段的原始计数 N
+      2. 用万用表量出真实峰峰值 V_true (mV)
+      3. 发 command_set_vpp_cal(round(V_true * 1024 / N))
+    """
+    if not 0 <= kn <= 0xFFFF:
+        raise ValueError("kn 必须在 0～65535 之间")
+    return build_command(0x8C, kn.to_bytes(2, "little") + b"\x00\x00")
+
+
 def parse_ascii_line(line: bytes):
     """
     解析FPGA返回的ASCII行。
 
     同时兼容：
-    F=0001000Hz V=133\\r\\n
-    F=0001000Hz V=133\\r
+    F=0001000Hz V=1085\\r\\n     <- 测量行(v1.17: V 是 mV 的 4 位)
+    F=0001000Hz V=1085\\r
     S=0001001\\r\\n
     A=0001099\\r\\n
     """
@@ -132,7 +161,7 @@ def parse_ascii_line(line: bytes):
         return {
             "type": "measurement",
             "frequency_hz": int(match.group(1)),
-            "vpp_lsb": int(match.group(2)),
+            "vpp_mv": int(match.group(2)),
         }
 
     match = PEAK_PATTERN.fullmatch(line)
@@ -384,21 +413,32 @@ def run_self_test():
     assert command_set_sweep(False) == bytes.fromhex(
         "5A A5 8B 00 01 00 8C"
     )
+    # 0x8C 电压标定(v1.17): KN=1024 -> 原始LSB模式; KN=8000 -> 默认 7.8125mV/LSB
+    assert command_set_vpp_cal(1024) == bytes.fromhex(
+        "5A A5 8C 00 04 00 04 00 00 94"
+    )
+    assert command_set_vpp_cal(8000) == bytes.fromhex(
+        "5A A5 8C 00 04 40 1F 00 00 EF"
+    )
+    assert command_set_vpp_cal() == command_set_vpp_cal(DEFAULT_VPP_KN)
 
     measurement = parse_ascii_line(
-        b"F=0001000Hz V=133\r\n"
+        b"F=0001000Hz V=1085\r\n"
     )
     assert measurement == {
         "type": "measurement",
         "frequency_hz": 1000,
-        "vpp_lsb": 133,
+        "vpp_mv": 1085,
     }
 
     old_measurement = parse_ascii_line(
-        b"F=0037500Hz V=134\r"
+        b"F=0037500Hz V=0134\r"
     )
     assert old_measurement["frequency_hz"] == 37500
-    assert old_measurement["vpp_lsb"] == 134
+    assert old_measurement["vpp_mv"] == 134
+
+    # 3 位的旧格式必须**解析失败**, 否则会静默按错单位读数
+    assert parse_ascii_line(b"F=0001000Hz V=133") is None
 
     main_peak = parse_ascii_line(
         b"S=0001001\r\n"

@@ -43,6 +43,8 @@ module tb_cmd_decoder;
     wire [1:0]  trig_mode;
     wire        sf_run;
     wire        sweep_en;
+    wire [15:0] cal_kn;         // [0x8C] 电压标定: 每 LSB 多少 mV x1024
+    wire        cal_load;
 
     cmd_decoder dut (
         .clk(clk), .rst_n(rst_n),
@@ -52,11 +54,12 @@ module tb_cmd_decoder;
         .dual_load(dual_load), .dual_fcw(dual_fcw),
         .wave_req(wave_req), .wave_sel(wave_sel),
         .trig_mode(trig_mode),
-        .sf_run(sf_run), .sweep_en(sweep_en)
+        .sf_run(sf_run), .sweep_en(sweep_en),
+        .cal_kn(cal_kn), .cal_load(cal_load)
     );
 
     // ---------------- 观察(等效 ILA 的打印版) ----------------
-    integer arb_cnt = 0, sf_cnt = 0;
+    integer arb_cnt = 0, sf_cnt = 0, cal_cnt = 0;
     reg sw_prev = 0;                      // sweep_en 上升沿检测(电平只打一次)
     always @(posedge clk) begin
         sw_prev <= sweep_en;
@@ -71,6 +74,11 @@ module tb_cmd_decoder;
         if (preset_load) $display("[TB] preset_load! 档位=%0d [%0t ns]", preset_val, $time);
         if (wave_req)    $display("[TB] wave_req 脉冲!(请求波形) [%0t ns]", $time);
         if (sweep_en && !sw_prev) $display("[TB] sweep_en 上升沿 = 1 (扫频开始) [%0t ns]", $time);
+        if (cal_load) begin
+            cal_cnt = cal_cnt + 1;
+            $display("[TB] cal_load 脉冲! cal_kn=%0d (0x%h) -> 每 LSB %0d.%04d mV  [%0t ns]",
+                     cal_kn, cal_kn, cal_kn >> 10, ((cal_kn & 16'h03FF) * 10000) >> 10, $time);
+        end
     end
 
     // ---------------- 自动量波形: 低电平宽度(拍数) ----------------
@@ -138,6 +146,19 @@ module tb_cmd_decoder;
         end
     endtask
 
+    // 0x8C 电压标定: payload = knL knH (保留) (保留), LEN=4, 小端 16 位
+    task send_8C_frame(input [15:0] kn);
+        reg [7:0] s;
+        begin
+            s = 8'h8C + 8'h00 + 8'h04 + kn[7:0] + kn[15:8];
+            send_byte(8'h5A); send_byte(8'hA5);
+            send_byte(8'h8C); send_byte(8'h00); send_byte(8'h04);
+            send_byte(kn[7:0]); send_byte(kn[15:8]);
+            send_byte(8'h00); send_byte(8'h00);
+            send_byte(s);               // SUM
+        end
+    endtask
+
     // ---------------- 主流程 ----------------
     initial begin
         $display("====== tb_cmd_decoder: 开始 ======");
@@ -158,16 +179,23 @@ module tb_cmd_decoder;
         send_8B_frame(8'h01);
         repeat (50) @(posedge clk);
 
-        // TODO(作业): 在这里加一条 0x8C 帧,
-        // 并在 cmd_decoder 里新增 0x8C 分支(例如置 ver_req 脉冲),
-        // 观察打印来验证你的修改。
+        // ---- 0x8C 电压标定(2026-09-30 补) ----
+        // 上电默认 cal_kn=8000; 先发 1024 切"原始 LSB 显示"模式, 再发回 8000。
+        $display(">> 发送 0x8C 电压标定帧: KN=1024 (原始 LSB 显示模式)...");
+        send_8C_frame(16'd1024);
+        repeat (50) @(posedge clk);
 
-        $display("====== 统计: arb_load=%0d 次, sf_run=%0d 次 ======", arb_cnt, sf_cnt);
+        $display(">> 发送 0x8C 电压标定帧: KN=8000 (7.8125mV/LSB 默认标定)...");
+        send_8C_frame(16'd8000);
+        repeat (50) @(posedge clk);
+
+        $display("====== 统计: arb_load=%0d 次, sf_run=%0d 次, cal_load=%0d 次 ======",
+                 arb_cnt, sf_cnt, cal_cnt);
         $display("====== 低电平宽度: 共 %0d 段, 其中 1 位宽 2160ns/108 拍 %0d 段 ======", npulse, n1bit);
-        if (arb_cnt == 1 && sf_cnt == 1)
-            $display(">>>>>> 自检通过: 两个关键命令都解析成功 <<<<<<");
+        if (arb_cnt == 1 && sf_cnt == 1 && cal_cnt == 2 && cal_kn == 16'd8000)
+            $display(">>>>>> 自检通过: 关键命令都解析成功, 0x8C 标定值按预期落地 <<<<<<");
         else
-            $display(">>>>>> 自检异常: 请检查波形 <<<<<<");
+            $display(">>>>>> 自检异常: 请检查波形 (cal_kn 现为 %0d) <<<<<<", cal_kn);
         $display("====== tb_cmd_decoder: 结束 ======");
         $finish;
     end

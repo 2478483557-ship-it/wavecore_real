@@ -82,7 +82,7 @@ def main():
             latest = measurements[-1]
             print(
                 f"      F={latest['frequency_hz']}Hz, "
-                f"Vpp={latest['vpp_lsb']}LSB"
+                f"Vpp={latest['vpp_mv']} mV"
             )
 
         print("[3/4] 开启1.1kHz第二频率并验证双峰")
@@ -129,7 +129,7 @@ def main():
         print(
             f"      fs={waveform['sample_rate_hz']}Hz, "
             f"min={min(samples)}, max={max(samples)}, "
-            f"Vpp={max(samples) - min(samples)}LSB"
+            f"Vpp={max(samples) - min(samples)} LSB (波形帧原始ADC)"
         )
 
         print("[RESULT] 硬件冒烟测试全部通过")

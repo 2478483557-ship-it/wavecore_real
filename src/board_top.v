@@ -60,6 +60,7 @@ module board_top (
     wire [31:0] arb_fcw;           // 串口任意频率 fcw
     wire        dual_load;         // 串口第二频率命令脉冲
     wire [31:0] dual_fcw;          // 串口第二频率 fcw
+    wire [15:0] cal_kn_w;          // [0x8C] Vpp 电压标定: 每 LSB 多少 mV x1024
 
     // ---- 0. 按键消抖: key0 -> 单脉冲 ----
     key_debounce u_key (
@@ -131,7 +132,9 @@ module board_top (
         .wave_sel    (wave_sel_w  ),
         .trig_mode   (trig_mode_w ),
         .sf_run      (sf_run_w    ),
-        .sweep_en    (sweep_en_w  )
+        .sweep_en    (sweep_en_w  ),
+        .cal_kn      (cal_kn_w    )
+        // .cal_load 悬空: 标定值本身是带记忆的寄存器, 脉冲只是预留回执/指示用
     );
 
     // ---- 0.8 双音模式控制(0x87 开双音, 任何单音设定自动回单音) ----
@@ -221,7 +224,7 @@ module board_top (
         .dbg_p_tick (meter_p_tick)
     );
 
-    // ---- 3.7 测量结果经串口上报: "F=xxxxxxxHz V=xxx" ----
+    // ---- 3.7 测量结果经串口上报: "F=xxxxxxxHz V=xxxx" (V 为 mV) ----
     measure_report u_report (
         .clk        (sys_clk    ),
         .rst_n      (sys_rst_n  ),
@@ -237,7 +240,8 @@ module board_top (
         .ext_hold   (wav_hold | sf_act_w),
         .dbg_fsm    (meas_dbg_fsm),
         .dbg_h_tick (meter_h_tick),
-        .dbg_p_tick (meter_p_tick)
+        .dbg_p_tick (meter_p_tick),
+        .cal_kn     (cal_kn_w   )
     );
 
     // ---- 3.8 FFT 频谱演示(B1 已点亮; 输出悬空供后续 B3 频谱显示) ----

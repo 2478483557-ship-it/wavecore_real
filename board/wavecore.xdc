@@ -1,4 +1,4 @@
-# WaveCore M2 board constraints (è¾¾èŠ¬å¥‡Pro)
+# WaveCore M2 board constraints (ALIENTEK Da Vinci Pro, XC7A35T-2FGG484)
 # Source: official hs_ad_da.xdc from ALIENTEK example 29_hs_ad_da
 # All pins verified against board IO pin table (see board/pin_map.md)
 # NOTE: keep this file ASCII-only (comments in English)
@@ -11,7 +11,7 @@ set_property -dict {IOSTANDARD LVCMOS15 PACKAGE_PIN R4} [get_ports sys_clk]
 set_property -dict {IOSTANDARD LVCMOS15 PACKAGE_PIN U7} [get_ports sys_rst_n]
 
 # --- M3: key0 & LED ---
-# IMPORTANT: key/led/sys_clk/sys_rst are ALL in bank 34 (VCCO=1.5V) on è¾¾èŠ¬å¥‡Pro,
+# IMPORTANT: key/led/sys_clk/sys_rst are ALL in bank 34 (VCCO=1.5V) on ALIENTEK Da Vinci Pro,
 # so they must use LVCMOS15 (official ALIENTEK XDC). Using LVCMOS33 causes DRC BIVC-1.
 set_property -dict {IOSTANDARD LVCMOS15 PACKAGE_PIN T4} [get_ports key0]
 set_property -dict {IOSTANDARD LVCMOS15 PACKAGE_PIN V9} [get_ports {led[0]}]
@@ -47,7 +47,7 @@ set_property -dict {IOSTANDARD LVCMOS33 PACKAGE_PIN D17} [get_ports uart_txd]
 # --- UART RX from CH340 (LVCMOS33, B16 bank, M5 commands) ---
 set_property -dict {IOSTANDARD LVCMOS33 PACKAGE_PIN E14} [get_ports uart_rxd]
 
-## ===== F1 ×ª·¢¿Ú: FPGA<->STM32 (2026-09-15) =====
+## ===== F1 passthrough port: FPGA<->STM32 (2026-09-15) =====
 set_property -dict {PACKAGE_PIN N13 IOSTANDARD LVCMOS33} [get_ports uart_stm32_txd]
 set_property -dict {PACKAGE_PIN R14 IOSTANDARD LVCMOS33} [get_ports uart_stm32_rxd]
 set_property PULLUP true [get_ports uart_stm32_rxd]

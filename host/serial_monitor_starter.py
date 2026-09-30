@@ -10,7 +10,7 @@ import serial
 import re
 
 # 解析规则(按协议固定宽度)
-PAT_F = re.compile(rb"F=(\d{7})Hz V=(\d{3})\r\n")   # 测量行
+PAT_F = re.compile(rb"F=(\d{7})Hz V=(\d{4})\r\n")   # 测量行
 PAT_P = re.compile(rb"([SA])=(\d{7})\r\n")           # 谱峰行(主峰/第二峰)
 
 

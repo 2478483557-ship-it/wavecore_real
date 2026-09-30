@@ -64,7 +64,7 @@ python wavecore_gui.py
 实时测量CSV列：
 
 ```text
-timestamp,frequency_hz,vpp_lsb,peak_s_hz,peak_a_hz,duty_percent,pulse_width_us,waveform_type,self_fft_peak_1_hz,self_fft_peak_2_hz,self_fft_peak_3_hz
+timestamp,frequency_hz,vpp_mv,peak_s_hz,peak_a_hz,duty_percent,pulse_width_us,waveform_type,self_fft_peak_1_hz,self_fft_peak_2_hz,self_fft_peak_3_hz
 ```
 
 波形CSV列：
@@ -73,7 +73,10 @@ timestamp,frequency_hz,vpp_lsb,peak_s_hz,peak_a_hz,duty_percent,pulse_width_us,w
 sample_index,time_ms,adc_lsb
 ```
 
-单音没有第二峰时，`peak_a_hz` 留空。Vpp是ADC原始计数差，单位为LSB，不是电压。
+单音没有第二峰时，`peak_a_hz` 留空。
+**Vpp 单位是毫伏(mV)**（协议 v1.17 起；旧版是 ADC 原始计数 LSB）。
+换算 `mV = Vpp_LSB × KN ÷ 1024`，`KN` 由 0x8C 命令设定，默认 8000 = 7.8125 mV/LSB。
+**默认 KN 只是「按 0~2V 量程」的假设值**，要当电压表用得先按 `board/uart_protocol.md` §2.8 标定。
 
 ## 独立审计脚本（check_duty.py）
 
@@ -117,4 +120,42 @@ python hardware_smoke_test.py COM4
 - 中文终端乱码：先执行 `chcp 65001`。
 - 波形请求失败：确认固件支持0x83，并关闭其他串口程序。
 - 脚本"秒退无输出"：检查脚本文件是否被写坏成 0 字节（用 dir 看大小）。
-- 固件 **v1.15** 的 D=/W=、TY=、SF/S2/S3=、0x88/0x89/0x8A/0x8B 已接入GUI；Spectrogram（频谱瀑布）可继续使用逐帧S/A作为加分项。
+- 固件 **v1.17** 的 D=/W=、TY=、SF/S2/S3=、0x88/0x89/0x8A/0x8B/0x8C 已接入GUI（`V=` 为 4 位 mV）。
+- **【9/27 更正】Spectrogram（频谱瀑布）目前尚未实现**：GUI 中没有瀑布/频谱面板，它只是"上位机可做的加分项"（纯软件、零 FPGA 改动）。**在真正实现并截图验证前，任何文档/答辩/视频脚本都不得声称已有瀑布图。**
+
+## link_response_scan.py —— 模拟链路频响实测（2026-09-28 新增）
+
+回答"我们的可观察带宽有多高"，用来决定**时基档位（fs）的上限依据**。
+
+```bash
+python link_response_scan.py            # 自动找 CH340 串口
+python link_response_scan.py --port COM4 --no-plot
+```
+
+- 原理：DDS 输出固定幅度正弦，频率 100Hz→1MHz 扫描，读 FPGA 上报的 Vpp，画"频率-幅度"曲线
+- **可信原因**：测量通路吃的是 25MSPS 的 ADC 流，不受"波形 50kHz 抽取"影响 → 反映**真实模拟带宽**
+- 输出：`link_response.csv`（频率/Vpp 中位数/范围/实测频率/波形类型）+ `link_response.png`（matplotlib 可用时）
+- 自动给出 **-3dB 可用带宽** 与建议的最高 fs 档位（≥2.5 倍可用带宽）
+
+## make_frames.py —— 命令帧生成 + 校验和自复核（2026-09-30 新增）
+
+按项目约定：**凡是要设信号（频率/波形/触发/抓波形），必须附上可粘贴的 HEX 帧**。
+本脚本就是那个"随手要帧"的入口，生成完还会**反向重算一遍校验和**自证。
+
+```bash
+python make_frames.py
+```
+
+输出：17 条常用帧（设 100Hz/1000Hz/2k/5k/10k/20k/37.5kHz、预设三档、波形三选、触发三档、
+请求波形、自研 FFT、扫频开关、第二频率），格式 `5A A5 TYPE LEN_H LEN_L PAYLOAD SUM`，
+**波特率 460800-8N1**。
+
+> 它是"生成器"；`hw_analysis/check_protocol_frames.py` 是"审计器"——
+> 后者会把 `board/uart_protocol.md` 里**所有**帧抠出来逐条复核长度与校验和。
+> 改过协议表后请跑一次审计器（2026-09-30 就是它抓出 37.5kHz 那行的小端字节写错）。
+
+### 烧板后的复验步骤
+
+见 **`board/verify_checklist.md`**（带全部可粘贴帧）。最关键的一条：
+**上电默认是 100kHz 预设档，而自研 FFT 的 fs 只有 50kHz —— 必须先显式发"设 1000Hz"**，
+否则 100kHz 会混叠，`SF` 永远出不来 976。

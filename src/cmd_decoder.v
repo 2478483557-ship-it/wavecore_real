@@ -7,6 +7,12 @@
 //   0x81 切换频率档位   payload=1B(0~3) -> preset_load + preset_val
 //   0x85 任意频率设置   payload=4B(小端 Hz) -> arb_load + arb_fcw(P0-1)
 //   0x87 第二频率设置   payload=4B(小端 Hz) -> dual_load + dual_fcw(双音, A)
+//   0x88 波形选择       payload=1B(0正弦/1方波/2三角) -> wave_sel
+//   0x89 触发模式       payload=1B(0自由/1上升/2下降) -> trig_mode
+//   0x8B 扫频使能       payload=1B(0停/1扫) -> sweep_en
+//   0x8C Vpp电压标定    payload=4B(knL,knH,保留,保留) -> cal_kn
+//        小端 16 位 KN = 每 LSB 多少 mV x1024(Q10), 默认 8000(=7.8125mV/LSB)。
+//        **KN=1024 是特殊调试值**: 1024>>10=1, 此时上报的 V 字段就是原始 LSB。
 //   其它命令暂忽略
 // 任意频率换算(P0-1 新知识):
 //   fcw = Hz x 2^32 / 50MHz, 里面有个"除以 5000 万"。
@@ -32,13 +38,18 @@ module cmd_decoder (
     output reg  [1:0]  wave_sel,   // 0x88 波形选择: 0=正弦 1=方波 2=三角
     output reg  [1:0]  trig_mode,  // 0x89 触发模式: 0=自由 1=上升 2=下降
     output reg         sf_run,     // 0x8A 自研FFT运行一次(脉冲)
-    output reg         sweep_en    // 0x8B 扫频使能(电平: 1=扫/0=停)
+    output reg         sweep_en,   // 0x8B 扫频使能(电平: 1=扫/0=停)
+    output reg  [15:0] cal_kn,     // 0x8C 每LSB多少mV x1024 (Q10), 带记忆
+    output reg         cal_load    // 0x8C 标定生效(1拍脉冲, 留给上位机做回执/闪灯)
 );
 
     // 换算常量: round(2^32/5e7 x 2^24)
     localparam [31:0] M = 32'd1_441_150_920;
     // 频率上限(2^32 相位 / 20ns 采样, 建议 <= 12.5MHz 保证 256 点/周期余量)
     localparam [31:0] HZ_MAX = 32'd12_500_000;
+    // Vpp 标定默认值: 7.8125 mV/LSB (AD9280 0~2V 量程, 256 码) x1024 = 8000
+    // 注意: 这是"出厂假设值", 真值要用万用表两点法实测后由 0x8C 覆盖
+    localparam [15:0] KN_DEF = 16'd8000;
 
     reg [2:0] st;
     localparam ST_H1 = 3'd0;   // 找 0x5A
@@ -75,6 +86,8 @@ module cmd_decoder (
             sf_run      <= 1'b0;
             sweep_en    <= 1'b0;
             wave_req    <= 1'b0;
+            cal_load    <= 1'b0;
+            cal_kn      <= KN_DEF;             // 上电就是 7.8125mV/LSB 的默认标定
             typ_r       <= 8'd0;
             len_r       <= 16'd0;
             sum_r       <= 8'd0;
@@ -86,6 +99,7 @@ module cmd_decoder (
             dual_load   <= 1'b0;
             wave_req    <= 1'b0;
             sf_run      <= 1'b0;
+            cal_load    <= 1'b0;
             if (rx_done) begin
                 case (st)
                     ST_H1: begin
@@ -110,7 +124,7 @@ module cmd_decoder (
                         len_r[7:0] <= rx_byte;
                         sum_r <= sum_r + rx_byte;
                         pidx  <= 3'd0;
-                        if (rx_byte > 8'd4)      st <= ST_H1;    // 超长帧丢弃
+                        if (rx_byte > 8'd4)      st <= ST_H1;    // 超长帧丢弃(本协议最大 4 字节负载)
                         else if (rx_byte == 8'd0) st <= ST_SU;    // 无负载
                         else                     st <= ST_PL;
                     end
@@ -149,6 +163,11 @@ module cmd_decoder (
                                 end
                                 8'h8B: begin             // 扫频: 1=开始 0=停止
                                     sweep_en <= pbuf[0][0];
+                                end
+                                8'h8C: begin             // Vpp 电压标定
+                                    // 小端拼 16 位: KN = pbuf[1]:pbuf[0]
+                                    cal_load <= 1'b1;
+                                    cal_kn   <= {pbuf[1], pbuf[0]};
                                 end
                                 default: ;               // 其余命令暂不支持
                             endcase

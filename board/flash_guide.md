@@ -3,6 +3,10 @@
 > 目标：断电重启后**无需 Vivado、无需 JTAG**，上电即运行最新设计
 > 硬件：达芬奇Pro（XC7A35T + MT25QL128 SPI Flash）
 
+> ⚠️ **先看这个**：如果 Vivado GUI 打不开工程 / `connect_hw_server` 连不上 / `vivado -mode batch` 卡住，
+> 见 **`board/vivado_gui_troubleshoot.md`**（2026-09-30 的 GUI 崩溃排查手册 + 两条"不开 GUI"的脚本路线）。
+> 只烧 SRAM（不固化 Flash）可以直接双击工程根目录的 **`program_device.bat`**，不需要打开工程。
+
 ## 一、生成 .mcs（Tcl 或 GUI）
 ```tcl
 write_cfgmem -format MCS -size 16 -interface SPIx4 \

@@ -16,6 +16,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from protocol import (
+    DEFAULT_VPP_KN,
+    RAW_LSB_KN,
     StreamParser,
     command_request_waveform,
     command_run_self_fft,
@@ -24,6 +26,7 @@ from protocol import (
     command_set_second_frequency,
     command_set_sweep,
     command_set_trigger,
+    command_set_vpp_cal,
     command_set_waveform,
 )
 
@@ -219,7 +222,7 @@ class WaveCoreApp:
         self.port_var = tk.StringVar()
         self.status_var = tk.StringVar(value="未连接")
         self.frequency_var = tk.StringVar(value="-- Hz")
-        self.vpp_var = tk.StringVar(value="-- LSB")
+        self.vpp_var = tk.StringVar(value="-- mV")
         self.peak_s_var = tk.StringVar(value="-- Hz")
         self.peak_a_var = tk.StringVar(value="-- Hz")
         self.duty_var = tk.StringVar(value="-- %")
@@ -231,6 +234,11 @@ class WaveCoreApp:
         self.waveform_choice_var = tk.StringVar(value="正弦")
         self.trigger_choice_var = tk.StringVar(value="自由")
         self.waveform_info_var = tk.StringVar(value="尚未请求波形")
+        # v1.17 电压标定: kn = 每 LSB 多少 mV x1024 (Q10); 8000 = 7.8125 mV/LSB
+        self.vpp_kn_var = tk.StringVar(value=str(DEFAULT_VPP_KN))
+        self.vpp_cal_info_var = tk.StringVar(
+            value=f"当前 KN={DEFAULT_VPP_KN} (7.8125 mV/LSB, 按 0~2V 量程)"
+        )
 
         self._configure_window()
         self._configure_styles()
@@ -285,7 +293,7 @@ class WaveCoreApp:
             measurements.columnconfigure(column, weight=1)
 
         self._measurement_card(measurements, 0, "测量频率 F", self.frequency_var)
-        self._measurement_card(measurements, 1, "峰峰值 Vpp", self.vpp_var)
+        self._measurement_card(measurements, 1, "峰峰值 Vpp (mV)", self.vpp_var)
         self._measurement_card(measurements, 2, "FFT主峰 S", self.peak_s_var)
         self._measurement_card(measurements, 3, "FFT第二峰 A", self.peak_a_var)
         self._measurement_card(measurements, 0, "占空比 D", self.duty_var, row=1)
@@ -376,6 +384,30 @@ class WaveCoreApp:
         )
         ttk.Button(controls, text="停止扫频", command=lambda: self.set_sweep(False)).grid(
             row=2, column=8, padx=4, pady=(10, 0)
+        )
+
+        # ---- 行3: 电压标定 (v1.17, 0x8C) ----
+        # Vpp 现在以 mV 上报。KN = 每 LSB 多少 mV x1024(Q10)。
+        # "原始LSB"按钮把 KN 设成 1024, 此时 V 字段就是 ADC 计数 —— 标定第一步用它。
+        ttk.Label(controls, text="电压标定 KN：").grid(row=3, column=0, pady=(10, 0))
+        ttk.Entry(controls, textvariable=self.vpp_kn_var, width=8).grid(
+            row=3, column=1, padx=4, pady=(10, 0)
+        )
+        ttk.Button(controls, text="应用标定", command=self.apply_vpp_cal).grid(
+            row=3, column=2, padx=4, pady=(10, 0)
+        )
+        ttk.Button(
+            controls,
+            text="原始LSB模式",
+            command=lambda: self.apply_vpp_cal(RAW_LSB_KN),
+        ).grid(row=3, column=3, padx=4, pady=(10, 0))
+        ttk.Button(
+            controls,
+            text="恢复默认",
+            command=lambda: self.apply_vpp_cal(DEFAULT_VPP_KN),
+        ).grid(row=3, column=4, padx=4, pady=(10, 0))
+        ttk.Label(controls, textvariable=self.vpp_cal_info_var).grid(
+            row=3, column=5, columnspan=4, padx=(12, 0), pady=(10, 0), sticky="w"
         )
 
         waveform = ttk.LabelFrame(self.root, text="波形（50 kHz采样）", padding=8)
@@ -544,6 +576,44 @@ class WaveCoreApp:
         action = "开始" if enabled else "停止"
         self._send(command_set_sweep(enabled), f"已发送{action}扫频命令")
 
+    # ------------------------------------------------------------------
+    # v1.17 电压标定 (0x8C)
+    # ------------------------------------------------------------------
+    def apply_vpp_cal(self, kn=None):
+        """
+        发送0x8C电压标定命令。
+
+        kn 省略时从输入框读。两种特殊值：
+          1024  -> 原始 LSB 透传(标定第一步: 读原始计数)
+          8000  -> 恢复默认 7.8125 mV/LSB
+
+        标定流程(两点法, 实际是"一点定标+满量程假设"):
+          1. 点"原始LSB模式", 记下 V 字段的原始计数 N
+          2. 用万用表量出真实峰峰值 V_true (mV)
+          3. 在输入框填 round(V_true * 1024 / N), 点"应用标定"
+        """
+        if kn is None:
+            try:
+                kn = int(self.vpp_kn_var.get().strip())
+            except ValueError:
+                messagebox.showwarning("KN 无效", "KN 必须是整数(每 LSB 多少 mV x1024)")
+                return
+
+        if not 0 <= kn <= 0xFFFF:
+            messagebox.showwarning("KN 超范围", "KN 必须在 0～65535 之间")
+            return
+
+        if kn == RAW_LSB_KN:
+            note = "原始LSB模式(此时 V 字段就是 ADC 计数)"
+        elif kn == DEFAULT_VPP_KN:
+            note = "默认标定 7.8125 mV/LSB (按 0~2V 量程)"
+        else:
+            note = f"{kn / 1024:.4f} mV/LSB"
+
+        self.vpp_kn_var.set(str(kn))
+        self._send(command_set_vpp_cal(kn), f"已发送电压标定：KN={kn} ({note})")
+        self.vpp_cal_info_var.set(f"当前 KN={kn} ({note})")
+
     def export_waveform_csv(self):
         samples = self.latest_waveform_samples
         sample_rate_hz = self.latest_waveform_sample_rate_hz
@@ -596,7 +666,7 @@ class WaveCoreApp:
             self.csv_writer.writerow([
                 "timestamp",
                 "frequency_hz",
-                "vpp_lsb",
+                "vpp_mv",
                 "peak_s_hz",
                 "peak_a_hz",
                 "duty_percent",
@@ -641,7 +711,7 @@ class WaveCoreApp:
             self.csv_writer.writerow([
                 datetime.now().isoformat(timespec="milliseconds"),
                 event["frequency_hz"],
-                event["vpp_lsb"],
+                event["vpp_mv"],
                 "" if self.latest_peak_s_hz is None else self.latest_peak_s_hz,
                 "" if self.latest_peak_a_hz is None else self.latest_peak_a_hz,
                 "" if self.latest_duty_percent is None else self.latest_duty_percent,
@@ -683,7 +753,7 @@ class WaveCoreApp:
 
         elif event_type == "measurement":
             self.frequency_var.set(f"{event['frequency_hz']} Hz")
-            self.vpp_var.set(f"{event['vpp_lsb']} LSB")
+            self.vpp_var.set(f"{event['vpp_mv']} mV")
             self._record_measurement(event)
 
         elif event_type == "peak":
@@ -735,7 +805,7 @@ class WaveCoreApp:
                 f"{len(samples)}点  "
                 f"fs={event['sample_rate_hz']} Hz  "
                 f"min={min(samples)}  max={max(samples)}  "
-                f"Vpp={max(samples) - min(samples)} LSB"
+                f"Vpp={max(samples) - min(samples)} LSB (波形帧原始ADC)"
             )
             self.export_wave_button.configure(state="normal")
             self.status_var.set(
