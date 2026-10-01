@@ -4,11 +4,16 @@
 // 调度     : 与 hw_analysis 金标准逐拍一致 (已验证: 1kHz → bin20)
 // 存储     : blk_mem_gen_1 (1024 x 32 单口, 无输出寄存器, 读延迟1拍)
 // 运行     : 自动循环: 采1024点(50kHz) -> 10级蝶形 -> 找峰 -> 输出一次
-// 作者     : WaveCore 队长 | 2026-09-16 | v1.1
+// [09-30 v1.2] 峰频率**抛物线插值**: SF/S2/S3 从 bin 量化(±24Hz)细化到 ±2Hz 级。
+//   数值模型: hw_analysis/probe_interp.py(与 RTL 同口径: 偏移二进制/Q15 Hann/L1 模)
+//   1kHz: 977 -> 999 ; 方波: 977/2979/4980 -> 999/2998/4998(真值 1000/3000/5000)
+//   整数 bin 时 δ=0 -> 与插值前**逐字不变**(USE_INTERP=1'b0 即为插值前的行为)
+// 作者     : WaveCore 队长 | 2026-09-16 | v1.2
 //===========================================================================
 module self_fft_1024 #(
     parameter DECIM    = 32'd1000,
-    parameter USE_HANN = 1'b1     // [09-30] 1=加 Hann 窗(根因修复, 默认) / 0=退回矩形窗(09-30 之前的行为)
+    parameter USE_HANN = 1'b1,    // [09-30] 1=加 Hann 窗(根因修复, 默认) / 0=退回矩形窗(09-30 之前的行为)
+    parameter USE_INTERP = 1'b1   // [09-30 v1.2] 1=峰频率抛物线插值 / 0=纯 bin 量化(负向对照)
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -18,6 +23,10 @@ module self_fft_1024 #(
     output reg  [23:0] res_f2,       // [调试] 第二峰
     output reg  [23:0] res_f3,       // [调试] 第三峰
     output reg         res_done,     // 一次完成脉冲
+    output wire        spec_we,      // [0x8E] 幅度谱写使能(扫描第0趟, bin0..511)
+    output wire [8:0]  spec_waddr,   // [0x8E] 写地址 = bin 号
+    output wire [7:0]  spec_wdata,   // [0x8E] 压缩幅度(spec_compress 输出)
+    output wire        busy,         // [0x8E] 运行中(采集/蝶形/扫描), 供 spec_frame 等待
     output wire [3:0]  dbg_st,       // [调试] 当前状态(0~13)
     output wire [3:0]  dbg2          // [调试] {cap_on, wr_idx[9:7]}
 );
@@ -92,23 +101,26 @@ module self_fft_1024 #(
     assign dbg2 = {done_latch, cap_on, wr_idx[9:8]};
 
     //======== FSM ========
-    reg [3:0] st;
-    assign dbg_st = st;
-    localparam S_CAP  = 4'd0,
-               S_START= 4'd1,
-               S_RD1  = 4'd2,
-               S_W1   = 4'd3,
-               S_RD2  = 4'd4,
-               S_W2   = 4'd5,
-               S_MUL  = 4'd6,
-               S_MUL2 = 4'd7,
-               S_MUL3 = 4'd14,
-               S_WR1  = 4'd8,
-               S_WR2  = 4'd9,
-               S_NEXT = 4'd10,
-               S_PEAK = 4'd11,
-               S_PKRD = 4'd12,
-               S_DONE = 4'd13;
+    reg [4:0] st;                      // [v1.2] 4->5 位(新增插值三态)
+    assign dbg_st = st[3:0];
+    localparam S_CAP  = 5'd0,
+               S_START= 5'd1,
+               S_RD1  = 5'd2,
+               S_W1   = 5'd3,
+               S_RD2  = 5'd4,
+               S_W2   = 5'd5,
+               S_MUL  = 5'd6,
+               S_MUL2 = 5'd7,
+               S_MUL3 = 5'd14,
+               S_WR1  = 5'd8,
+               S_WR2  = 5'd9,
+               S_NEXT = 5'd10,
+               S_PEAK = 5'd11,
+               S_PKRD = 5'd12,
+               S_DONE = 5'd13,
+               S_NB   = 5'd15,   // [v1.2] 第 4 趟: 采集三个峰的左右邻 bin
+               S_NBRD = 5'd16,
+               S_ICALC= 5'd17;   // [v1.2] 插值计算(减法循环除法)
 
     reg [3:0]  stage;
     reg [9:0]  base, j, half, nblk, blk, i1, i2;
@@ -171,6 +183,36 @@ module self_fft_1024 #(
     wire       far_pk  = (d_pk >= GAP);
     wire       far_all = (d_pk >= GAP) && (d_b2 >= GAP);
 
+    //======== [09-30 v1.2] 峰频率抛物线插值 ========
+    // 谱峰是主瓣不是尖峰: 用峰值 bin 与左右邻 bin 的 L1 模做抛物线插值,
+    //   δ = 0.5*(c-a)/(2b-a-c)   f = (k+δ)*fs/N
+    // 取邻居的办法: 加"第 4 趟扫描", 依次访问 0..1023, 把三个峰各自的 (左,中,右)
+    //   bin 幅度收进寄存器 —— 与找峰同一套读时序, 不新增存储访问、不动蝶形。
+    // δ 的 Q8 定标 = ±128(±0.5 bin); 除法用**减法循环**(商 <=128, 最多 128 拍),
+    //   不用综合器的组合除法器(那会拉出长组合链)。
+    // 边界: 峰 bin<=1 或 邻 bin 缺失 -> δ=0(退回整数 bin 公式, 与旧行为一致);
+    //   2/3 峰不满足"幅度>=主峰/8"门限 -> 报 0(与旧行为一致)。
+    reg  [9:0] nb_addr;
+    reg        nb_go;
+    wire [9:0] nb_bin = rev10(nb_addr);
+    reg [16:0] n_a0,n_b0,n_c0, n_a1,n_b1,n_c1, n_a2,n_b2,n_c2;
+    reg [16:0] ic_a, ic_b, ic_c;
+    reg [9:0]  ic_bin;
+    reg        ic_val, ic_ok;
+    reg [1:0]  ic_ph, ip_pk;
+    reg [24:0] ic_rem;
+    reg [7:0]  ic_q;
+    reg signed [18:0] ic_ns;                                   // c-a
+    wire signed [20:0] ic_dps = ($signed({3'b0, ic_b}) <<< 1) - $signed({3'b0, ic_a}) - $signed({3'b0, ic_c});
+    wire               ic_dpok = ic_dps > 21'sd16;             // 分母太小 -> 不插值
+    wire [20:0]        ic_dpu  = ic_dps[20:0];                 // 已知 >16, 当无符号用
+    wire signed [18:0] ic_nsw = $signed({2'b0, ic_c}) - $signed({2'b0, ic_a});
+    wire [17:0]        ic_abs = ic_nsw[18] ? (~ic_nsw[17:0] + 18'd1) : ic_nsw[17:0];
+    wire signed [9:0]  ic_dq  = ic_ns[18] ? -$signed({2'b00, ic_q}) : $signed({2'b00, ic_q});
+    wire [17:0]        ic_bin8 = {ic_bin, 8'd0};
+    wire signed [19:0] ic_x   = $signed({2'b0, ic_bin8}) + ic_dq;
+    wire signed [39:0] ic_f   = ($signed(ic_x) * 40'sd50000) >>> 18;
+
     // ---- 蝶形组合运算 ----
     wire signed [16:0] sumr = ar + br;        // 17位
     wire signed [16:0] sumi = ai + bi;
@@ -189,6 +231,43 @@ module self_fft_1024 #(
     wire signed [15:0] d_im = dout[15:0];
     wire [16:0] d_mag = (d_re[15] ? (~d_re + 1) : d_re) + (d_im[15] ? (~d_im + 1) : d_im);
 
+    //======== [09-30 新增] 0x8E 幅度谱: 扫描第 0 趟顺手导出压缩幅度 ========
+    // 时机: 三趟找峰扫描的**第 0 趟会逐个访问全部 1024 个地址**, 且处理周期
+    //   恰好拿到该 bin 的 L1 模 d_mag(与找峰同一口径, 不新增任何存储访问)。
+    // 只导出正半轴 bin 0..511(实数 FFT 共轭对称, 上半轴冗余; 与 0x8E 帧 512 点吻合)。
+    // 压缩: spec_compress(前导零+移位, ~70 LUT)。两级打拍避开长组合链:
+    //   第 X 拍: d_mag/cur_bin 有效 -> 记入 sc_m1/sc_b1
+    //   第 X+1 拍: 组合压缩 sc_y -> 记入 sc_y2/sc_b2
+    //   第 X+2 拍: spec_we=1, spec_buf 在时钟沿写入 => 扫描循环不用插等待
+    // ★ 若删掉这段, 0x8E 帧会全 0(但其它功能一行不受影响)
+    reg  [16:0] sc_m1;
+    reg  [9:0]  sc_b1;
+    reg         sc_w1;
+    reg  [7:0]  sc_y2;
+    reg  [8:0]  sc_b2;
+    reg         sc_w2;
+    wire [7:0]  sc_y;
+    spec_compress u_scomp (.mag(sc_m1), .y(sc_y));
+    wire sc_valid = (st == S_PKRD) && pk_go && (scan == 2'd0);   // 第0趟的处理周期
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            sc_m1<=17'd0; sc_b1<=10'd0; sc_w1<=1'b0;
+            sc_y2<=8'd0;  sc_b2<=9'd0;  sc_w2<=1'b0;
+        end
+        else begin
+            sc_m1 <= d_mag;
+            sc_b1 <= cur_bin;
+            sc_w1 <= sc_valid && (cur_bin <= 10'd511);
+            sc_y2 <= sc_y;
+            sc_b2 <= sc_b1[8:0];
+            sc_w2 <= sc_w1;
+        end
+    end
+    assign spec_we    = sc_w2;
+    assign spec_waddr = sc_b2;
+    assign spec_wdata = sc_y2;
+    assign busy       = cap_on || (st != S_CAP);
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             st<=S_CAP; dcnt<=0; wr_idx<=0; cap_on<=1'b0; run_l<=1'b0; done_latch<=1'b0;
@@ -200,6 +279,10 @@ module self_fft_1024 #(
             ar<=0;ai<=0;br<=0;bi<=0;cr<=0;ci<=0;
             p_rr<=0;p_ii<=0;p_ri<=0;p_ir<=0;
             res_freq<=0; res_done<=0; pk_addr<=0; pk_best<=0; pk_bin<=0; scan<=2'd0;
+            nb_addr<=10'd0; nb_go<=1'b0; ip_pk<=2'd0; ic_ph<=2'd0;
+            n_a0<=0;n_b0<=0;n_c0<=0; n_a1<=0;n_b1<=0;n_c1<=0; n_a2<=0;n_b2<=0;n_c2<=0;
+            ic_a<=0;ic_b<=0;ic_c<=0; ic_bin<=10'd0; ic_val<=1'b0; ic_ok<=1'b0;
+            ic_rem<=25'd0; ic_q<=8'd0; ic_ns<=19'd0;
         end
         else begin
             we <= 1'b0;
@@ -337,20 +420,105 @@ module self_fft_1024 #(
                             pk_addr <= 10'd0;
                             st      <= S_PEAK;
                         end
+                        else if (USE_INTERP) begin            // [v1.2] 第 4 趟: 收邻居
+                            nb_addr <= 10'd0; nb_go <= 1'b0;
+                            ip_pk   <= 2'd0;  ic_ph <= 2'd0;
+                            n_a0<=0; n_b0<=0; n_c0<=0;
+                            n_a1<=0; n_b1<=0; n_c1<=0;
+                            n_a2<=0; n_b2<=0; n_c2<=0;
+                            st      <= S_NB;
+                        end
                         else st<=S_DONE;
                     end
                     else begin pk_addr<=pk_addr+10'd1; st<=S_PEAK; end
                  end
                 end
+                // ---- [v1.2] 第 4 趟: 逐 bin 比对, 收集三个峰的邻 bin 幅度 ----
+                S_NB: begin addr<=nb_addr; nb_go<=1'b0; st<=S_NBRD; end
+                S_NBRD: begin
+                    if (!nb_go) nb_go<=1'b1;                 // 与找峰同一套 2 拍读等待
+                    else begin
+                        if (nb_bin == pk_bin - 10'd1)  n_a0 <= d_mag;
+                        if (nb_bin == pk_bin)          n_b0 <= d_mag;
+                        if (nb_bin == pk_bin + 10'd1)  n_c0 <= d_mag;
+                        if (nb_bin == b2 - 10'd1)      n_a1 <= d_mag;
+                        if (nb_bin == b2)              n_b1 <= d_mag;
+                        if (nb_bin == b2 + 10'd1)      n_c1 <= d_mag;
+                        if (nb_bin == b3 - 10'd1)      n_a2 <= d_mag;
+                        if (nb_bin == b3)              n_b2 <= d_mag;
+                        if (nb_bin == b3 + 10'd1)      n_c2 <= d_mag;
+                        if (nb_addr==10'd1023) st<=S_ICALC;
+                        else begin nb_addr<=nb_addr+10'd1; st<=S_NB; end
+                    end
+                end
+                // ---- [v1.2] 逐峰计算 δ 并写回 res_freq/res_f2/res_f3 ----
+                S_ICALC: begin
+                    case (ic_ph)
+                        2'd0: begin                              // 选峰 + 取 (a,b,c)
+                            case (ip_pk)
+                                2'd0: begin ic_a<=n_a0; ic_b<=n_b0; ic_c<=n_c0; ic_bin<=pk_bin;
+                                            ic_val<=1'b1; end
+                                2'd1: begin ic_a<=n_a1; ic_b<=n_b1; ic_c<=n_c1; ic_bin<=b2;
+                                            ic_val<=(b2!=10'd0) && (m2 >= (pk_best>>3)); end
+                                default: begin ic_a<=n_a2; ic_b<=n_b2; ic_c<=n_c2; ic_bin<=b3;
+                                            ic_val<=(b3!=10'd0) && (m3 >= (pk_best>>3)); end
+                            endcase
+                            ic_ph <= 2'd1;
+                        end
+                        2'd1: begin                              // 装载除法
+                            ic_ns  <= ic_nsw;
+                            ic_ok  <= ic_val && (ic_bin >= 10'd2) && ic_dpok;
+                            ic_rem <= {7'b0, ic_abs} << 7;
+                            ic_q   <= 8'd0;
+                            ic_ph  <= 2'd2;
+                        end
+                        2'd2: begin                              // 减法循环(商 <=128)
+                            if (ic_ok && (ic_rem >= {4'b0, ic_dpu}) && (ic_q != 8'd128)) begin
+                                ic_rem <= ic_rem - {4'b0, ic_dpu};
+                                ic_q   <= ic_q + 8'd1;
+                            end
+                            else ic_ph <= 2'd3;
+                        end
+                        default: begin                           // 出结果
+                            if (!ic_val) begin                   // 无有效峰 -> 0(同旧行为)
+                                case (ip_pk)
+                                    2'd1: res_f2   <= 24'd0;
+                                    2'd2: res_f3   <= 24'd0;
+                                    default: res_freq <= 24'd0;
+                                endcase
+                            end
+                            else if (!ic_ok) begin               // 边界/整形差 -> 整数 bin(同旧行为)
+                                case (ip_pk)
+                                    2'd1: res_f2   <= (b2*32'd50000)>>10;
+                                    2'd2: res_f3   <= (b3*32'd50000)>>10;
+                                    default: res_freq <= (pk_bin*32'd50000)>>10;
+                                endcase
+                            end
+                            else begin                            // 插值结果(负数截 0)
+                                case (ip_pk)
+                                    2'd1: res_f2   <= ic_f[39] ? 24'd0 : ic_f[23:0];
+                                    2'd2: res_f3   <= ic_f[39] ? 24'd0 : ic_f[23:0];
+                                    default: res_freq <= ic_f[39] ? 24'd0 : ic_f[23:0];
+                                endcase
+                            end
+                            ic_ph <= 2'd0;
+                            if (ip_pk == 2'd2) st <= S_DONE;
+                            else               ip_pk <= ip_pk + 2'd1;
+                        end
+                    endcase
+                end
                 S_DONE: begin
-                    // [09-30 深夜 BUGFIX] 原来 24'd50000 -> 按 Verilog 位宽规则实际按 24 位相乘,
-                    //   pk_bin>=336 (16406Hz) 起静默溢出, 读数恰好偏 -16384Hz。
-                    //   改 32 位: 511*50000=25,550,000 << 2^32。
-                    //   证据: hw_analysis/check_self_fft_overflow.py（逐 bin 复核）
-                    res_freq <= (pk_bin*32'd50000)>>10;
-                    // [09-27] 门限: 幅度 >= 主峰/8 才认(与 IP 通路 A 行判据一致); 否则报 0 = 无有效峰
-                    res_f2   <= (m2 >= (pk_best>>3)) ? ((b2*32'd50000)>>10) : 24'd0;   // [09-30 BUGFIX] 24->32
-                    res_f3   <= (m3 >= (pk_best>>3)) ? ((b3*32'd50000)>>10) : 24'd0;   // [09-30 BUGFIX] 24->32
+                    // [09-30 v1.2] RES 已在 S_ICALC 写好; 仅当关掉插值时才走这条老路
+                    if (!USE_INTERP) begin
+                        // [09-30 深夜 BUGFIX] 原来 24'd50000 -> 按 Verilog 位宽规则实际按 24 位相乘,
+                        //   pk_bin>=336 (16406Hz) 起静默溢出, 读数恰好偏 -16384Hz。
+                        //   改 32 位: 511*50000=25,550,000 << 2^32。
+                        //   证据: hw_analysis/check_self_fft_overflow.py（逐 bin 复核）
+                        res_freq <= (pk_bin*32'd50000)>>10;
+                        // [09-27] 门限: 幅度 >= 主峰/8 才认(与 IP 通路 A 行判据一致); 否则报 0 = 无有效峰
+                        res_f2   <= (m2 >= (pk_best>>3)) ? ((b2*32'd50000)>>10) : 24'd0;   // [09-30 BUGFIX] 24->32
+                        res_f3   <= (m3 >= (pk_best>>3)) ? ((b3*32'd50000)>>10) : 24'd0;   // [09-30 BUGFIX] 24->32
+                    end
                     res_done <= 1'b1;                     // 单拍完成脉冲
                     st<=S_CAP; cap_on<=1'b0; wr_idx<=0; dcnt<=0;   // 回静默, 等下一条 0x8A
                 end

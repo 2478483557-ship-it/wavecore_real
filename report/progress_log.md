@@ -200,3 +200,44 @@
 - ⚠️ 留存疑点：20kHz 时 `W` 有 31us 异常帧（理论 25us，与 D=50.0% 自相矛盾），待查。
 - ⬜ 剩余待办：① 演示材料包 ② 报告"工程问题与解决"章节 ③ **GitHub 提交**
   ④ **最后一步：万用表标定 KN 真值**（先照 `report/borrow_list.md` 把器械一次性借齐）
+
+
+### 2026-09-30 深夜 · 0x8E 幅度谱帧（FPGA 侧 + 上位机工具）实现完毕
+
+- **动机**：外部评审「频谱展示不足」。之前只有 3 个峰值数字，上位机画不出频谱图（数据源缺失）。
+- **FPGA 侧（全部新增/改动清单）**：
+  - 新增 `src/spec_compress.v`（17bit L1 模 -> 8bit 对数压缩，优先编码+移位，~70 LUT，无 DSP/BRAM）；
+  - 新增 `src/spec_buf.v`（512x8 **分布式 RAM**，异步读，与发送状态机同款用法）；
+  - 新增 `src/spec_frame.v`（0x8E -> 等自研FFT空闲 -> 触发运行 -> 发 518B 帧；含 **42ms 看门狗**防卡测量流）；
+  - `self_fft_1024.v`：扫描第 0 趟顺手导出压缩幅度（三级流水，不打断扫描时序）+ 新增 `busy`；
+  - `cmd_decoder.v`：0x8E -> `spec_req`；`board_top.v`：接线 + TX 五路仲裁（谱帧>波形>谱峰>自研>测量）+ 让路逻辑。
+- **协议 v1.18**（`uart_protocol.md` §2.9）：上行帧 `5A A5 02 02 00 + 512B + SUM`；
+  审计器 37 条帧全 OK；`make_frames.py` 增加 0x8E 帧（`5A A5 8E 00 00 8E`）。
+- **验证（本机可做的全做了）**：
+  - `hw_analysis/verify_spectrum_frame.py`：整数级复刻 RTL 的**逐字节金标准**
+    （教训：旋转因子表是**补码存法**，模型必须按 signed 读 —— 第一版当 unsigned 读，频谱全发散，
+    用「整数模型 vs 浮点参考」当场对照抓出）；
+  - `sim/fft_check/tb_self_fft.v`：新增 11 项谱检查（谱峰 bin + 关键压缩码），应得 **PASS=17 FAIL=0**；
+  - 新增 `sim/board_elab/`：**整顶层精化检查**（全部 src + 4 个 IP 替身 -> `xelab board_top`）——
+    已通过 Built simulation snapshot，所有例化端口对齐；
+  - `xvlog` + `xelab` 全过。
+- **上位机**：`host/spectrum_waterfall.py` + `run_waterfall.bat`（独立小工具，可先于主 GUI 用；
+  `--demo` 无板自测已出图 `host/preview_waterfall_demo.png`）。
+- **工程脚本**：`D:/.../rebuild_bitstream.tcl` 已加**幂等 add_files**（自动纳入 3 个新文件）；
+  `sync_src_gbk.py` 已把全部改动同步到 D 盘（GBK）。
+- ⬜ **下一步（等用户）**：双击 `rebuild_bitstream.bat` -> `check_lut.bat` -> `program_device.bat`
+  -> 双击 `run_fft_check.bat`（PASS=17）-> `run_waterfall.bat` 看频谱/瀑布。
+- ⬜ 之后：频谱插值 -> 时基档位 -> （自研 4096，需重定制 IP，另排）。
+
+
+### 2026-10-01 · ★ 0x8E 幅度谱帧 / 瀑布图：上板联调通过
+
+- 09:39–09:42 全流程重建（含 0x8E 三模块）→ 用户烧板；新数字 **LUT 6591(31.69%) / FF 6925(16.65%) / BRAM 11 / DSP 28**；
+  **WNS +1.835** / WHS +0.048（全收敛）。0x8E 的代价 ≈ **+239 LUT / +122 FF / −0.55ns**。
+- **联调三条判据全部命中**：方波→三条静止竖柱（1k/3k/5k）；正弦→一条竖柱；扫频→斜线且循环。
+- 抓帧对账（`host/last_frame.txt`）：512 bin / 噪声底中位数 15 / 峰值码 225（≈满量程）。
+- ⚠️ 实测更正：**`0x8B` 扫频持续循环，设单音频率关不掉** → 协议 §2.7 已更正；
+  静态脚本一律先发停止帧（`spectrum_waterfall.py --sweep-stop` 已内置）。
+- 顺带发现：**模拟链路对谐波衰减远大于理想**（3 次 −30dB vs 理论 −9.5dB）→ THD 别用回环方波；
+  `host/link_response_scan.py`（频响实验）优先级上升（它也是时基档位的前置）。
+- 文档：新增 `report/verify_result_2026-10-01.md`；`board/verify_checklist.md` 新增 **§8 复验清单**；全库资源数字已同步。

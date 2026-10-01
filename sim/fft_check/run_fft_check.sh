@@ -12,6 +12,7 @@ cd "$(dirname "$0")"
 echo "[0/4] 同步被测源码 (以仓库 src/ 为准)"
 cp -f ../../src/self_fft_1024.v ./self_fft_1024.v
 cp -f ../../src/hann_rom.v     ./hann_rom.v
+cp -f ../../src/spec_compress.v ./spec_compress.v   # [0x8E] 谱帧压缩器(self_fft 新例化)
 
 # ---- 窗表一致性断言(2026-09-30 加 Hann 窗后新增) --------------------------
 # hann_rom.v 里写的是 $readmemh("D:/Verilog_project/wavecore/src/hann_1024.hex", ...)
@@ -29,7 +30,7 @@ echo "[1/4] 生成激励表"
 
 echo "[2/4] 编译"
 rm -rf xsim.dir work
-xvlog self_fft_1024.v hann_rom.v twiddle_rom.v blk_mem_gen_1.v tb_self_fft.v 2>&1 | tee xvlog.log
+xvlog self_fft_1024.v spec_compress.v hann_rom.v twiddle_rom.v blk_mem_gen_1.v tb_self_fft.v 2>&1 | tee xvlog.log
 
 echo "[3/4] 精化"
 xelab tb_self_fft -s tb_sim -timescale 1ns/1ps 2>&1 | tee xelab.log

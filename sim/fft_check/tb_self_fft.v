@@ -20,6 +20,13 @@
 //                   - 场景 C/D 的期望值按"加窗后"重算(见下面每条后面的话);
 //                   - .USE_HANN(1'b1) 显式写出, 改成 1'b0 重跑 = 负向对照
 //                     (此时场景 E 必须报 S2=1171, 否则说明这个测试根本抓不到那个 bug)。
+//   [09-30 v1.2 抛物线插值] SF/S2/S3 现在做峰频率插值(原理见 self_fft_1024.v 头部):
+//                     - 整数 bin 场景(A/B/C/D/F): δ=0 -> **读数与插值前逐字相同**;
+//                     - 非整数 bin 场景(E): 976 -> **1001**(真值 1000.9);
+//                     - .USE_INTERP(1'b0) 重跑 = 第二个负向对照(E 必须退回 976±60)。
+//                     数值模型: hw_analysis/probe_interp.py(与 RTL 同口径)。
+//   [若 D 场景出现 ±1~2Hz 抖动] 那是插值的定点舍入(整数 bin 的理论 δ=0,
+//                     实际 a/c 差几个 LSB) -> 把 D 判据放宽到 ±2Hz 即可, 不是 bug。
 //
 //   [时序细节·已用数据排除] tb 用 DECIM=1(一拍一个样点), 而 hann_rom 的输出是**寄存器**,
 //                   且 RTL 里 `w_addr <= wr_idx` 是每拍都赋 -> DECIM=1 时窗系数整体
@@ -42,8 +49,16 @@
 //                  —— 证明 GAP 约束没把"真双峰"也一起干掉
 //                  [加窗后修正] 两音**等幅**, 谁排第一本来就是并列的(模型只差 0.09%),
 //                  改窗后次序会翻 -> 判据改成"集合相等", 不指定谁当 SF
-//     E sin20p5   正弦 20.5 周期(非整数 bin, 最坏情形): S2=0 S3=0, SF 允许 976±60
+//     E sin20p5   正弦 20.5 周期(非整数 bin, 最坏情形): S2=0 S3=0, SF 允许 1001±10(插值后)
 //                  —— 这一条就是板上"假峰"案的回归项(SK-034 的落地)
+//
+// 【0x8E 幅度谱监视(09-30 深夜新增)】
+//   本 tb 同时监视 DUT 新增的 spec_we/waddr/wdata, 把扫描第0趟写出的 512 字节
+//   压缩幅度收进 spec_mem, 每个场景核对:
+//     · 谱峰值 bin 落在期望范围内(与 SF 判据同源);
+//     · 关键 bin 的压缩码与 hw_analysis/verify_spectrum_frame.py(整数级金标准)一致(±2)。
+//   金标准取值: A: peak=20, y20=208 y60=181 y100=171 | B: peak=20, y20=200
+//              F: peak=400, y400=200       (窗偏移 ±2 格对这三个 bin 的影响为 0, 已数值验证)
 //
 // 说明 1: DECIM=1(一拍一个样点)。板上是 DECIM=1000=50kHz, DECIM 只决定"采满
 //         1024 点要多久", 不参与 FFT 数学, 取 1 让仿真快 1000 倍。
@@ -67,11 +82,19 @@ module tb_self_fft;
 
     always #10 clk = ~clk;                       // 20ns 周期 = 50MHz
 
-    self_fft_1024 #(.DECIM(32'd1), .USE_HANN(1'b1)) u_dut (   // 改 1'b0 = 负向对照
+    self_fft_1024 #(.DECIM(32'd1), .USE_HANN(1'b1), .USE_INTERP(1'b1)) u_dut (  // 两个参数都改 1'b0 = 负向对照
         .clk(clk), .rst_n(rst_n), .ad_cap(ad_cap), .run(run),
         .res_freq(res_freq), .res_f2(res_f2), .res_f3(res_f3),
         .res_done(res_done), .dbg_st(dbg_st), .dbg2(dbg2)
     );
+
+    // [0x8E] 幅度谱监视: 收集扫描写出的 512 字节压缩幅度
+    reg [7:0] spec_mem [0:511];
+    integer   spec_pk;                    // 本场景谱峰值 bin(dump_spec 填写)
+    integer   si;
+    initial for (si = 0; si < 512; si = si + 1) spec_mem[si] = 8'h00;
+    always @(posedge clk)
+        if (u_dut.spec_we) spec_mem[u_dut.spec_waddr] <= u_dut.spec_wdata;
 
     //======== 激励: 1024 点查表, 每拍推进一格(与 DUT 采样严格同拍) ========
     reg [9:0] ridx = 10'd0;
@@ -152,6 +175,48 @@ module tb_self_fft;
         end
     endtask
 
+    // [0x8E] 找谱峰值 bin 并打印关键 bin
+    task dump_spec;
+        integer k, sv;
+        begin
+            spec_pk = -1; sv = -1;
+            for (k = 0; k < 512; k = k + 1)
+                if (spec_mem[k] > sv) begin sv = spec_mem[k]; spec_pk = k; end
+            $display("           [0x8E] spec_peak bin=%0d val=%0d | y20=%0d y60=%0d y100=%0d",
+                     spec_pk, sv, spec_mem[20], spec_mem[60], spec_mem[100]);
+        end
+    endtask
+
+    // [0x8E] 谱峰 bin 范围检查(支持两段: [lo..hi] 或 [lo2..hi2], lo2<0 表示第二段不用)
+    task chk_spec_range(input integer lo, input integer hi,
+                        input integer lo2, input integer hi2);
+        begin
+            if ((spec_pk >= lo && spec_pk <= hi) ||
+                (lo2 >= 0 && spec_pk >= lo2 && spec_pk <= hi2)) begin
+                $display("           [SPEC-PASS] 谱峰 bin=%0d", spec_pk);
+                n_pass = n_pass + 1;
+            end
+            else begin
+                $display("           [SPEC-FAIL] 谱峰 bin=%0d 不在期望范围!", spec_pk);
+                n_fail = n_fail + 1;
+            end
+        end
+    endtask
+
+    // [0x8E] 压缩码检查(对照整数级金标准)
+    task chk_spec_byte(input integer bin, input integer exp, input integer tol);
+        begin
+            if (spec_mem[bin] >= exp - tol && spec_mem[bin] <= exp + tol) begin
+                $display("           [SPEC-PASS] y[%0d]=%0d (金标准 %0d±%0d)", bin, spec_mem[bin], exp, tol);
+                n_pass = n_pass + 1;
+            end
+            else begin
+                $display("           [SPEC-FAIL] y[%0d]=%0d, 金标准 %0d±%0d", bin, spec_mem[bin], exp, tol);
+                n_fail = n_fail + 1;
+            end
+        end
+    endtask
+
     //======== 单场景执行 + 自动判读 ========
     // mode=1 : SF/S2/S3 三个数必须逐字相符
     // mode=0 : 只要求 S2=S3=0 且 |SF-ef| <= tol   (用于"分不开"/"非整数 bin"这类)
@@ -185,6 +250,7 @@ module tb_self_fft;
                      res_f2,   to_bin(res_f2),
                      res_f3,   to_bin(res_f3));
             dump_top;
+            dump_spec;
 
             if (mode == 2'd1) begin               // 严格: 三个数逐字相符
                 if (res_freq === ef && res_f2 === e2 && res_f3 === e3) begin
@@ -236,18 +302,25 @@ module tb_self_fft;
         dump_tab;
 
         sel = 3'd0; do_run("A_sq20  方波",       24'd976,  24'd2929, 24'd4882, 2'd1, 24'd0 );
+        chk_spec_range(20, 20, -1, -1);
+        chk_spec_byte(20, 208, 2); chk_spec_byte(60, 181, 2); chk_spec_byte(100, 171, 2);
         sel = 3'd1; do_run("B_sin20 正弦",       24'd976,  24'd0,    24'd0,    2'd1, 24'd0 );
+        chk_spec_range(20, 20, -1, -1); chk_spec_byte(20, 200, 2);
         sel = 3'd2; do_run("C_d22   相隔2bin",   24'd1002, 24'd0,    24'd0,    2'd0, 24'd80);
+        chk_spec_range(19, 23, -1, -1);
         sel = 3'd3; do_run("D_d100  真双峰",     24'd976,  24'd4882, 24'd0,    2'd2, 24'd0 );
-        sel = 3'd4; do_run("E_s20p5 非整数bin",  24'd976,  24'd0,    24'd0,    2'd0, 24'd60);
+        chk_spec_range(19, 21, 99, 101);
+        sel = 3'd4; do_run("E_s20p5 非整数bin",  24'd1001, 24'd0,    24'd0,    2'd0, 24'd10);
+        chk_spec_range(19, 22, -1, -1);
         // [09-30 深夜] 高 bin 回归: bin400 = 19531Hz。
         //   频率换算原来按 24 位相乘, bin>=336 静默溢出(偏 -16384Hz) -> 会报 3147Hz。
         //   修复(乘数改 32 位)后本场景才可能通过。
         sel = 3'd5; do_run("F_s400  高bin溢出",  24'd19531, 24'd0,   24'd0,    2'd1, 24'd0 );
+        chk_spec_range(400, 400, -1, -1); chk_spec_byte(400, 200, 2);
 
         $display("=====================================================");
         $display("RESULT: PASS=%0d  FAIL=%0d", n_pass, n_fail);
-        if (n_fail == 0) $display("*** 全部通过 ***  (6 个场景: A/B 严格, C 分不开, D 真双峰, E 非整数bin, F 高bin溢出)");
+        if (n_fail == 0) $display("*** 全部通过 ***  (6 个场景 + 11 项 0x8E 幅度谱检查: A/B 严格, C 分不开, D 真双峰, E 非整数bin, F 高bin溢出)");
         else             $display("*** 有场景不通过, 看上面 FAIL 行 ***");
         $finish;
     end

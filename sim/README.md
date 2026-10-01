@@ -15,23 +15,25 @@
 | 2026-09-30 | vpp_mv（LSB→mV）| 11 个硬编码期望点，含饱和/0 边界 | **11/11 PASS** | `mv_check/xsim_unit.log` |
 | 2026-09-30 | measure_report v3.3（46 字节整帧）| S0 首帧暖机 / S1 默认标定 / S2 原始LSB / S3 大数 / S4 TY 闸门活性 | **全 PASS**，逐字节一致（46B）| `mv_check/xsim_report.log` |
 | 2026-09-30 | cmd_decoder 0x8C（电压标定）| 发 KN=1024 再发 KN=8000，查 cal_load/cal_kn | **自检通过**：cal_load=2 次、cal_kn=8000 落地 | `mv_check/xsim_cmd.log` |
-| 2026-09-30 | self_fft_1024（**加 Hann 窗 + 补非整数 bin 场景**）| **5 场景**：方波 / 正弦 / 双音2bin / 双音80bin / **正弦 20.5 周期（非整数 bin）** | ⏳ **xvlog/xelab 已通过、快照已生成**；`xsim` 执行环节本机挂死，待**双击 `fft_check/run_fft_check.bat`** 跑（应得 `PASS=5 FAIL=0`）| `fft_check/` |
+| 2026-09-30 | self_fft_1024（**加 Hann 窗 + 非整数 bin + 高bin + 0x8E 谱检查**）| **6 场景 + 11 项 0x8E 幅度谱检查**（方波/正弦/双音2bin/双音80bin/非整数bin/高bin400；tb 同时监视 spec_we/waddr/wdata）| ⏳ **xvlog/xelab 已通过、快照已生成**；`xsim` 执行环节本机挂死，待**双击 `fft_check/run_fft_check.bat`** 跑（应得 `PASS=17 FAIL=0`）| `fft_check/` |
+| 2026-09-30 | **board_top 整顶层精化** | 全部 `src/*.v` + 4 个 IP 行为替身 → `xelab board_top` | ✅ **Built simulation snapshot**（所有例化端口对齐，改过例化必跑）| `board_elab/` |
 | 2026-09-30 | fft_demo（**LUT 瘦身等价性**）| 用 `xfft_0` 行为替身收样点打滚动校验和，改动前后各跑一遍逐字节比对 | ⏳ **xvlog/xelab 已通过；xsim 执行环节本机挂死，待用户本机跑** | `fft_demo_check/` |
 
 ## 命令行批量回归（不用开 GUI，推荐）
 
 ```bash
-bash sim/fft_check/run_fft_check.sh      # self_fft_1024 三峰判据（5 场景, 含非整数 bin）
+bash sim/fft_check/run_fft_check.sh      # self_fft_1024 三峰判据（6 场景 + 11 项 0x8E 谱检查）
+bash sim/board_elab/run_board_elab.sh    # 整顶层端口精化检查（不开 Vivado, 改过例化必跑）
 bash sim/mv_check/run_mv_check.sh        # vpp_mv 换算 + 46 字节整帧 + 0x8C 命令
 bash sim/fft_demo_check/run_equiv.sh     # fft_demo 改块RAM 前后"样点流等价"比对
 ```
 
-**不想开命令行？** 这三个都有对应的 `.bat`，**直接双击**即可：
-`sim/fft_check/run_fft_check.bat`、`sim/fft_demo_check/run_equiv.bat`
+**不想开命令行？** 这些都有对应的 `.bat`，**直接双击**即可：
+`sim/fft_check/run_fft_check.bat`、`sim/fft_demo_check/run_equiv.bat`、`sim/board_elab/run_board_elab.bat`
 （`.bat` 内部用 `set PATH=D:\Xilinx\Vivado\2020.2\bin;%PATH%` 调 `xvlog.bat`/`xelab.bat`/`xsim.bat`，
 已验证 xvlog/xelab 两步可用）。
 
-### `fft_check` 的 5 个场景与判据（2026-09-30 更新，**必须看懂再改期望值**）
+### `fft_check` 的 6 个场景 + 0x8E 谱检查（2026-09-30 更新，**必须看懂再改期望值**）
 
 | # | 场景 | 激励 | 判据 | 期望 |
 |---|---|---|---|---|
@@ -40,6 +42,7 @@ bash sim/fft_demo_check/run_equiv.sh     # fft_demo 改块RAM 前后"样点流�
 | C | 双音 20+22 周期（相隔 2 bin）| `dual20_22.hex` | **单峰 + SF 容差 ±80Hz** | `S2=S3=0`，SF 允许 976/1024/1074 |
 | D | 双音 20+100 周期（相隔 80 bin）| `dual20_100.hex` | **集合相等** `{SF,S2}={976,4882}`，`S3=0` | 两个峰都报出来，不指定谁第一 |
 | E | 正弦 **20.5** 周期（**非整数 bin**）| `sin20p5.hex` | **单峰 + SF 容差 ±60Hz** | `S2=S3=0`（假峰回归项）|
+| F | 正弦 **400** 周期（高 bin 溢出回归）| `sin400.hex` | **严格** | `19531 / 0 / 0`（修复前会报 3147）|
 
 为什么 C/D 的判据要这么写（**不是被测设计变差，是原来的判据太脆**）：
 
@@ -48,6 +51,13 @@ bash sim/fft_demo_check/run_equiv.sh     # fft_demo 改块RAM 前后"样点流�
 - **D**：两个音**等幅**，谁排第一本来就是"并列"（数值模型实测只差 0.09%），
   改窗后次序会翻 → 判据必须是"集合相等"，不能指定谁当 SF。
 
+> **F 与 0x8E 谱检查（2026-09-30 深夜新增）**：
+> - 场景 F：正弦 400 周期（bin400 = 19531Hz）—— **"频率换算位宽溢出"bug 的回归项**（修复前会报 3147Hz）。
+> - tb 同时监视 `self_fft_1024` 新增的 `spec_we/waddr/wdata`（0x8E 幅度谱导出口），
+>   每个场景核对**谱峰 bin** 与**关键 bin 的压缩码**（金标准 = `hw_analysis/verify_spectrum_frame.py`，
+>   整数级复刻 RTL；A 场景三根线 y20/y60/y100 = 208/181/171）。
+>   全部通过时应为 **`PASS=17 FAIL=0`**（6 场景 + 11 项谱检查）。
+>
 > **E 是这次新增的重点**。原来 4 张表全是"整数个周期"，而矩形窗在整数 bin 处泄漏**恰好为 0**，
 > 所以板上那个假峰（`S2=1171` = bin24）在仿真里**永远抓不到**（SK-034）。
 > 补上非整数 bin 后，板上的 bug 变成了**永久回归项**。

@@ -8,7 +8,7 @@ REM  hann_rom.v loads D:/Verilog_project/wavecore/src/hann_1024.hex by absolute
 REM  path - keep that file in sync with ../../src/hann_1024.hex.
 REM
 REM  USAGE: double-click this file.
-REM  PASS  : the log ends with "PASS=6 FAIL=0"
+REM  PASS  : the log ends with "PASS=17 FAIL=0" (6 scenarios + 11 spectrum checks)
 REM
 REM  !! KEEP THIS FILE PURE ASCII, WITH CRLF LINE ENDINGS !!
 REM  cmd.exe reads .bat in the system codepage (GBK on Chinese Windows);
@@ -26,10 +26,11 @@ echo.
 echo [1/4] copying DUT source from ..\..\src ...
 copy /Y ..\..\src\self_fft_1024.v . >nul
 copy /Y ..\..\src\hann_rom.v . >nul
+copy /Y ..\..\src\spec_compress.v . >nul
 if errorlevel 1 goto err
 
 echo [2/4] compiling ...
-call xvlog.bat --relax self_fft_1024.v hann_rom.v twiddle_rom.v blk_mem_gen_1.v tb_self_fft.v
+call xvlog.bat --relax self_fft_1024.v spec_compress.v hann_rom.v twiddle_rom.v blk_mem_gen_1.v tb_self_fft.v
 if errorlevel 1 goto err
 
 echo.

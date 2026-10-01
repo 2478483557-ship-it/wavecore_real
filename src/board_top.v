@@ -124,6 +124,19 @@ module board_top (
     wire [1:0] wave_sel_w;     // 0x88 波形选择
     wire [1:0] trig_mode_w;    // 0x89 触发模式
 
+    // ---- 0.7c [0x8E] 幅度谱帧相关线(同样必须先声明后使用; 下方 3.7/3.9 会用到) ----
+    wire        spec_req_w;    // 0x8E 请求脉冲(cmd_decoder 输出)
+    wire        spec_run_w;    // spec_frame -> self_fft 运行脉冲
+    wire [7:0]  spec_wdata_w;  // 谱缓存写数据
+    wire [8:0]  spec_waddr_w;  // 谱缓存写地址
+    wire        spec_we_w;     // 谱缓存写使能
+    wire [8:0]  spec_raddr_w;  // 谱缓存读地址
+    wire [7:0]  spec_rdata_w;  // 谱缓存读数据
+    wire        spec_txd;      // 谱帧 TX
+    wire        spec_act_w;    // 谱帧占用 TX
+    wire        spec_hold_w;   // 谱帧请求期间暂停其它行
+    wire        sf_busy_w;     // 自研FFT 运行中
+
     cmd_decoder u_cmd (
         .clk         (sys_clk     ),
         .rst_n       (sys_rst_n   ),
@@ -140,7 +153,8 @@ module board_top (
         .trig_mode   (trig_mode_w ),
         .sf_run      (sf_run_w    ),
         .sweep_en    (sweep_en_w  ),
-        .cal_kn      (cal_kn_w    )
+        .cal_kn      (cal_kn_w    ),
+        .spec_req    (spec_req_w  )
         // .cal_load 悬空: 标定值本身是带记忆的寄存器, 脉冲只是预留回执/指示用
     );
 
@@ -269,7 +283,7 @@ module board_top (
         .width_us   (meas_wid   ),
         .uart_txd   (m_txd      ),
         .meas_busy  (m_busy     ),
-        .ext_hold   (wav_hold | sf_act_w),
+        .ext_hold   (wav_hold | sf_act_w | spec_hold_w),
         .dbg_fsm    (meas_dbg_fsm),
         .dbg_h_tick (meter_h_tick),
         .dbg_p_tick (meter_p_tick),
@@ -305,7 +319,7 @@ module board_top (
         .fft_hz2    (fft_hz2_w  ),
         .uart_txd   (fft_txd    ),
         .fft_active (fft_act    ),
-        .ext_hold   (wav_hold | sf_act_w)
+        .ext_hold   (wav_hold | sf_act_w | spec_hold_w)
     );
     // ---- 3.10 波形帧上传(F2-A): 0x83 请求 -> 传 1024 点(50kHz) ----
     // wave_req_w / wave_sel_w / trig_mode_w 的声明已上移到 0.7b 段;
@@ -319,7 +333,7 @@ module board_top (
         .req        (wave_req_w),
         .trig_mode  (trig_mode_w),
         .meas_busy  (m_busy    ),
-        .fft_busy   (fft_act   ),
+        .fft_busy   (fft_act | spec_act_w),   // 谱帧发送期间也让波形请求等着
         .uart_txd   (wav_txd   ),
         .wav_active (wav_act   ),
         .wav_hold   (wav_hold  )
@@ -338,11 +352,15 @@ module board_top (
         .clk      (sys_clk   ),
         .rst_n    (sys_rst_n ),
         .ad_cap   (ad_cap    ),
-        .run      (sf_run_w  ),
+        .run      (sf_run_w | spec_run_w),   // 0x8A 或 0x8E 都触发一次运行
         .res_freq (sf_freq_w ),
         .res_f2   (sf_f2_w   ),
         .res_f3   (sf_f3_w   ),
-        .res_done (sf_done_w )
+        .res_done (sf_done_w ),
+        .spec_we  (spec_we_w ),
+        .spec_waddr(spec_waddr_w),
+        .spec_wdata(spec_wdata_w),
+        .busy     (sf_busy_w )
     );
     self_fft_report u_sfrpt (
         .clk      (sys_clk   ),
@@ -350,16 +368,46 @@ module board_top (
         .res_freq (sf_freq_w ),
         .res_f2   (sf_f2_w   ),
         .res_f3   (sf_f3_w   ),
-        .res_done (sf_done_w ),
+        .res_done (sf_done_w & ~spec_hold_w), // 0x8E 触发的运行不报 SF 行(防抢 TX)
         .m_busy   (m_busy    ),
         .fft_act  (fft_act   ),
-        .wav_act  (wav_act   ),
+        .wav_act  (wav_act | spec_act_w),     // 谱帧发送期间也让路
         .uart_txd (sf_txd    ),
         .sf_active(sf_act_w  )
     );
-    // TX 引脚 4 路互斥: 波形 > 谱峰 > 自研FFT > 测量
-    assign uart_txd = wav_act ? wav_txd : (fft_act ? fft_txd :
-                      (sf_act_w ? sf_txd : m_txd));
+
+    // ---- 3.13 [0x8E] 幅度谱帧: 缓存 + 发送 (2026-09-30 新增) ----
+    // 链路: self_fft 扫描时写 spec_buf -> 0x8E 触发一次运行 -> spec_frame
+    //       等运行完成后把 512 点幅度顺序发出(518 字节帧)
+    spec_buf u_specbuf (
+        .clk   (sys_clk      ),
+        .we    (spec_we_w    ),
+        .waddr (spec_waddr_w ),
+        .wdata (spec_wdata_w ),
+        .raddr (spec_raddr_w ),
+        .rdata (spec_rdata_w )
+    );
+    spec_frame u_specframe (
+        .clk          (sys_clk      ),
+        .rst_n        (sys_rst_n    ),
+        .req          (spec_req_w   ),
+        .sf_busy      (sf_busy_w    ),
+        .fft_done     (sf_done_w    ),
+        .meas_busy    (m_busy       ),
+        .fft_busy     (fft_act      ),
+        .wav_busy     (wav_act      ),
+        .sf_line_busy (sf_act_w     ),
+        .fft_run      (spec_run_w   ),
+        .rdata        (spec_rdata_w ),
+        .raddr        (spec_raddr_w ),
+        .uart_txd     (spec_txd     ),
+        .spec_active  (spec_act_w   ),
+        .spec_hold    (spec_hold_w  )
+    );
+
+    // TX 引脚 5 路互斥: 谱帧 > 波形 > 谱峰 > 自研FFT > 测量
+    assign uart_txd = spec_act_w ? spec_txd : (wav_act ? wav_txd : (fft_act ? fft_txd :
+                      (sf_act_w ? sf_txd : m_txd)));
 
     // ---- 3.11 F1 转发口: 把整条串口数据流镜像给 STM32 ----
     uart_mirror u_mirror (

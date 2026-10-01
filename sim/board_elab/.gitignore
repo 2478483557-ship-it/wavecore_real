@@ -1,0 +1,7 @@
+# run_board_elab.sh/.bat 每次运行会把 ../../src 的全部源码 + 2 个替身拷贝进本目录
+# 做整体精化检查 —— 这些拷贝是**生成物**(脚本每次重拷), 不入库。
+# 本目录只保留手写件: run_board_elab.sh / .bat + blk_mem_gen_0.v / ila_0.v 替身 + 本 README。
+# (xsim.dir/ 、*.log 、*.jou 、*.pb 已被仓库根 .gitignore 全局忽略)
+*.v
+!blk_mem_gen_0.v
+!ila_0.v

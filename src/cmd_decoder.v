@@ -10,6 +10,7 @@
 //   0x88 波形选择       payload=1B(0正弦/1方波/2三角) -> wave_sel
 //   0x89 触发模式       payload=1B(0自由/1上升/2下降) -> trig_mode
 //   0x8B 扫频使能       payload=1B(0停/1扫) -> sweep_en
+//   0x8E 幅度谱帧请求   空负载 -> spec_req(1拍脉冲); 触发自研FFT并回 512 点谱帧
 //   0x8C Vpp电压标定    payload=4B(knL,knH,保留,保留) -> cal_kn
 //        小端 16 位 KN = 每 LSB 多少 mV x1024(Q10), 默认 8000(=7.8125mV/LSB)。
 //        **KN=1024 是特殊调试值**: 1024>>10=1, 此时上报的 V 字段就是原始 LSB。
@@ -40,7 +41,8 @@ module cmd_decoder (
     output reg         sf_run,     // 0x8A 自研FFT运行一次(脉冲)
     output reg         sweep_en,   // 0x8B 扫频使能(电平: 1=扫/0=停)
     output reg  [15:0] cal_kn,     // 0x8C 每LSB多少mV x1024 (Q10), 带记忆
-    output reg         cal_load    // 0x8C 标定生效(1拍脉冲, 留给上位机做回执/闪灯)
+    output reg         cal_load,   // 0x8C 标定生效(1拍脉冲, 留给上位机做回执/闪灯)
+    output reg         spec_req    // 0x8E 幅度谱帧请求(1拍脉冲)
 );
 
     // 换算常量: round(2^32/5e7 x 2^24)
@@ -87,6 +89,7 @@ module cmd_decoder (
             sweep_en    <= 1'b0;
             wave_req    <= 1'b0;
             cal_load    <= 1'b0;
+            spec_req    <= 1'b0;
             cal_kn      <= KN_DEF;             // 上电就是 7.8125mV/LSB 的默认标定
             typ_r       <= 8'd0;
             len_r       <= 16'd0;
@@ -100,6 +103,7 @@ module cmd_decoder (
             wave_req    <= 1'b0;
             sf_run      <= 1'b0;
             cal_load    <= 1'b0;
+            spec_req    <= 1'b0;
             if (rx_done) begin
                 case (st)
                     ST_H1: begin
@@ -168,6 +172,9 @@ module cmd_decoder (
                                     // 小端拼 16 位: KN = pbuf[1]:pbuf[0]
                                     cal_load <= 1'b1;
                                     cal_kn   <= {pbuf[1], pbuf[0]};
+                                end
+                                8'h8E: begin             // 幅度谱帧请求(空负载)
+                                    spec_req <= 1'b1;
                                 end
                                 default: ;               // 其余命令暂不支持
                             endcase

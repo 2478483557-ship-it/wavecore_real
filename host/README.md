@@ -121,7 +121,14 @@ python hardware_smoke_test.py COM4
 - 波形请求失败：确认固件支持0x83，并关闭其他串口程序。
 - 脚本"秒退无输出"：检查脚本文件是否被写坏成 0 字节（用 dir 看大小）。
 - 固件 **v1.17** 的 D=/W=、TY=、SF/S2/S3=、0x88/0x89/0x8A/0x8B/0x8C 已接入GUI（`V=` 为 4 位 mV）。
-- **【9/27 更正】Spectrogram（频谱瀑布）目前尚未实现**：GUI 中没有瀑布/频谱面板，它只是"上位机可做的加分项"（纯软件、零 FPGA 改动）。**在真正实现并截图验证前，任何文档/答辩/视频脚本都不得声称已有瀑布图。**
+- **【9/27 更正 / 9-30 更新】Spectrogram（频谱瀑布）**：主 GUI 里仍没有瀑布/频谱面板（属队友1待办）。
+  **但数据源问题已在 2026-09-30 深夜解决**：FPGA 侧新增 **0x8E 幅度谱帧**（协议 v1.18 §2.9，512 点对数压缩），
+  并配了独立小工具 **`spectrum_waterfall.py`（见下节，双击 `run_waterfall.bat` 可用）**。
+  - [10-01 新增] 开机自动设信号：`--freq 1000 --wave 1`（1kHz 方波）/ `--sweep`（启动扫频看瀑布斜线）
+  - [10-01 新增] **一键 bat（双击即用，自带停扫频）**：`run_waterfall_1k_sq.bat`（方波→三柱）/
+    `run_waterfall_1k_sin.bat`（正弦→单柱）/ `run_waterfall_sweep.bat`（扫频→斜线）/
+    `run_waterfall_grab.bat`（抓 200 帧存 `last_shot.png` + `last_frame.txt`，诊断用）
+  **在真正上板联调并截图验证前，任何文档/答辩/视频脚本仍不得把"我们的瀑布图"当成已完成功能对外展示。**
 
 ## link_response_scan.py —— 模拟链路频响实测（2026-09-28 新增）
 
@@ -137,6 +144,25 @@ python link_response_scan.py --port COM4 --no-plot
 - 输出：`link_response.csv`（频率/Vpp 中位数/范围/实测频率/波形类型）+ `link_response.png`（matplotlib 可用时）
 - 自动给出 **-3dB 可用带宽** 与建议的最高 fs 档位（≥2.5 倍可用带宽）
 
+## spectrum_waterfall.py —— 0x8E 频谱图 / 瀑布图小工具（2026-09-30 新增）
+
+MCU 侧"频谱展示"的数据源与演示工具（**独立于主 GUI**，主 GUI 的正式集成仍属队友1）：
+
+```bash
+# 双击（推荐）：
+run_waterfall.bat            # 只有一个串口时自动选择
+run_waterfall.bat COM5
+# 或命令行：
+python spectrum_waterfall.py COM5 --interval 0.15
+python spectrum_waterfall.py --demo            # 无板演示（合成扫频数据）
+python spectrum_waterfall.py --demo --save x.png   # 自测出图
+```
+
+- 原理：每 `interval` 秒发一条 `0x8E`（`5A A5 8E 00 00 8E`）→ 收 518B 谱帧 → 上图画频谱 + 瀑布
+- 上图 = 当前频谱（0~25kHz，512 点，对数压缩码）；下图 = 瀑布（历史滚动，**扫频时是一条斜线**）
+- 用**系统 Python 3.8**（pyserial/matplotlib/numpy 都装好；`run_waterfall.bat` 里写死了绝对路径）
+- 演示用预览图：`preview_waterfall_demo.png`（合成数据出的效果图）
+
 ## make_frames.py —— 命令帧生成 + 校验和自复核（2026-09-30 新增）
 
 按项目约定：**凡是要设信号（频率/波形/触发/抓波形），必须附上可粘贴的 HEX 帧**。
@@ -146,8 +172,8 @@ python link_response_scan.py --port COM4 --no-plot
 python make_frames.py
 ```
 
-输出：17 条常用帧（设 100Hz/1000Hz/2k/5k/10k/20k/37.5kHz、预设三档、波形三选、触发三档、
-请求波形、自研 FFT、扫频开关、第二频率），格式 `5A A5 TYPE LEN_H LEN_L PAYLOAD SUM`，
+输出：18 条常用帧（设 100Hz/1000Hz/2k/5k/10k/20k/37.5kHz、预设三档、波形三选、触发三档、
+请求波形、自研 FFT、**幅度谱帧请求(0x8E)**、扫频开关、第二频率），格式 `5A A5 TYPE LEN_H LEN_L PAYLOAD SUM`，
 **波特率 460800-8N1**。
 
 > 它是"生成器"；`hw_analysis/check_protocol_frames.py` 是"审计器"——
