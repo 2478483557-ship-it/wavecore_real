@@ -122,7 +122,13 @@ module board_top (
     //   "隐式 1 位线网"建网, 端口位宽就对不上(靠工具宽容才没坏), 必须放在使用之前。
     wire       wave_req_w;     // 0x83 波形帧请求
     wire [1:0] wave_sel_w;     // 0x88 波形选择
-    wire [1:0] trig_mode_w;    // 0x89 触发模式
+    wire [1:0] trig_mode_w;
+
+// ---- 0.7c [0x8D] 时基档位线(同样先声明、后使用) ----
+wire        tb_set_w;    // 0x8D 命令生效脉冲
+wire [1:0]  tb_sel_w;    // 目标档位 0/1/2
+wire [31:0] tb_decim_w;  // 抽取比  -> 波形/自研FFT/IP FFT 三条通路
+wire [31:0] tb_fs_w;     // 等效采样率(Hz) -> 所有频率换算(不许再写字面量 50000)    // 0x89 触发模式
 
     // ---- 0.7c [0x8E] 幅度谱帧相关线(同样必须先声明后使用; 下方 3.7/3.9 会用到) ----
     wire        spec_req_w;    // 0x8E 请求脉冲(cmd_decoder 输出)
@@ -151,6 +157,8 @@ module board_top (
         .wave_req    (wave_req_w  ),
         .wave_sel    (wave_sel_w  ),
         .trig_mode   (trig_mode_w ),
+        .tb_set      (tb_set_w    ),
+        .tb_sel      (tb_sel_w    ),
         .sf_run      (sf_run_w    ),
         .sweep_en    (sweep_en_w  ),
         .cal_kn      (cal_kn_w    ),
@@ -295,10 +303,23 @@ module board_top (
     wire [23:0] fft_hz2_w;       // FFT 第二峰频率
     wire        fft_done_w;      // FFT 主峰完成
     wire        fft_done2_w;     // FFT 第二峰完成
+    // ---- 3.35 [0x8D] 时基档位: 50k(默认)/12.5k/100k ----
+    timebase u_timebase (
+        .clk     (sys_clk  ),
+        .rst_n   (sys_rst_n),
+        .set     (tb_set_w ),
+        .sel_in  (tb_sel_w ),
+        .decim   (tb_decim_w),
+        .fs_hz   (tb_fs_w  ),
+        .sel_out (         )
+    );
+
     fft_demo u_fft_demo (
         .clk     (sys_clk    ),
         .rst_n   (sys_rst_n  ),
         .ad_cap  (ad_cap     ),
+        .decim_cfg(tb_decim_w ),
+        .fs_cfg  (tb_fs_w    ),
         .fft_hz  (fft_hz_w   ),
         .fft_hz2 (fft_hz2_w  ),
         .fft_done(fft_done_w ),
@@ -330,6 +351,7 @@ module board_top (
         .clk        (sys_clk   ),
         .rst_n      (sys_rst_n ),
         .ad_cap     (ad_cap    ),
+        .decim_cfg  (tb_decim_w),
         .req        (wave_req_w),
         .trig_mode  (trig_mode_w),
         .meas_busy  (m_busy    ),
@@ -352,6 +374,8 @@ module board_top (
         .clk      (sys_clk   ),
         .rst_n    (sys_rst_n ),
         .ad_cap   (ad_cap    ),
+        .decim_cfg(tb_decim_w),
+        .fs_cfg   (tb_fs_w   ),
         .run      (sf_run_w | spec_run_w),   // 0x8A 或 0x8E 都触发一次运行
         .res_freq (sf_freq_w ),
         .res_f2   (sf_f2_w   ),

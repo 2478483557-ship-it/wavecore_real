@@ -11,4 +11,4 @@ REM  Close the plot window to exit.  Only ONE program may hold the COM port,
 REM  so close run_gui.bat / any serial assistant / other copies of this first.
 REM  !! KEEP THIS FILE PURE ASCII, WITH CRLF LINE ENDINGS !!
 REM ===========================================================================
-call "%~dp0run_waterfall.bat" --sweep-stop --freq 1000 --wave 1
+call "%~dp0run_waterfall.bat" --sweep-stop --timebase 0 --freq 1000 --wave 1

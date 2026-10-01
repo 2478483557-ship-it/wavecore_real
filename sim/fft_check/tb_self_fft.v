@@ -84,6 +84,7 @@ module tb_self_fft;
 
     self_fft_1024 #(.DECIM(32'd1), .USE_HANN(1'b1), .USE_INTERP(1'b1)) u_dut (  // 两个参数都改 1'b0 = 负向对照
         .clk(clk), .rst_n(rst_n), .ad_cap(ad_cap), .run(run),
+        .decim_cfg(32'd0), .fs_cfg(32'd0),   // [0x8D] 0 = 用参数(DECIM=1) / 50000
         .res_freq(res_freq), .res_f2(res_f2), .res_f3(res_f3),
         .res_done(res_done), .dbg_st(dbg_st), .dbg2(dbg2)
     );

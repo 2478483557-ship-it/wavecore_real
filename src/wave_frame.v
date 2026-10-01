@@ -1,6 +1,6 @@
 //===========================================================================
 // 模块名   : wave_frame (v5.0 · blk_mem_gen IP 缓存版)
-// 功能     : 0x83 请求一次, 上传最近 1024 点波形(50kHz = 20.5ms)
+// 功能     : 0x83 请求一次, 上传最近 1024 点波形(默认 50kHz = 20.5ms; [0x8D] 时基可改)
 // 存储     : 用 Block Memory Generator IP(blk_mem_gen_0, 1024x8 单口RAM)
 //           -> RAM 必进 BRAM, 无推断玄学(官方姿势, 替代手写 reg 数组)
 // 端口节奏 : 采集时 wea=1 写(addra=wr_idx); 发送时读 douta=mem[addra] 组合直读
@@ -13,6 +13,7 @@ module wave_frame (
     input  wire        clk,
     input  wire        rst_n,
     input  wire [7:0]  ad_cap,
+    input  wire [31:0] decim_cfg,   // [0x8D] 时基抽取比(0 = 用 1000 默认)
     input  wire        req,
     input  wire [1:0]  trig_mode,   // 0x89: 0=自由 1=上升沿 2=下降沿
     input  wire        meas_busy,
@@ -21,6 +22,9 @@ module wave_frame (
     output wire        wav_active,
     output wire        wav_hold
 );
+
+    // [0x8D] 时基: 波形抽取比(默认 1000 -> 50kHz; T2=4000 -> 12.5kHz; T3=500 -> 100kHz)
+    wire [31:0] decim_use = (decim_cfg == 32'd0) ? 32'd1000 : decim_cfg;
 
     //======== blk_mem_gen 接口 ========
     reg  [9:0]  addra_s;
@@ -53,7 +57,7 @@ module wave_frame (
                 wr_idx <= 10'd0;               // 触发归零: 帧从触发点开始
                 dcnt   <= 32'd0;
             end
-            else if (dcnt == 32'd999) begin
+            else if (dcnt == decim_use - 32'd1) begin
                 dcnt <= 32'd0;
                 wea  <= 1'b1;                 // 写脉冲
                 dina <= ad_cap;

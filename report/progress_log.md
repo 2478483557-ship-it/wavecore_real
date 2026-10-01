@@ -241,3 +241,51 @@
 - 顺带发现：**模拟链路对谐波衰减远大于理想**（3 次 −30dB vs 理论 −9.5dB）→ THD 别用回环方波；
   `host/link_response_scan.py`（频响实验）优先级上升（它也是时基档位的前置）。
 - 文档：新增 `report/verify_result_2026-10-01.md`；`board/verify_checklist.md` 新增 **§8 复验清单**；全库资源数字已同步。
+
+
+### 2026-10-01 · 时基档位 0x8D 实现（RTL 完成，待同步+板测）
+
+- 新增 `src/timebase.v`：T1 50kHz(默认) / T2 12.5kHz(细分辨) / T3 100kHz(展宽)。
+- `wave_frame` / `fft_demo` / `self_fft_1024` 三条通路改用 `decim_cfg`，**频率换算全部改 `fs_hz`**
+  （字面量 50000 清零；新增端口 0 = 回退原参数 → tb 与默认行为不变）。
+- `cmd_decoder` 加 0x8D；协议升 **v1.19 §2.10**；上位机 `spectrum_waterfall.py --timebase N` 自动标轴。
+- 验证：`xvlog`+`xelab` 通过；`sim/board_elab` 整顶层精化通过（例化端口全对齐）。
+- 顺带：`host/run_link_scan.bat`（频响实验一键版，脚本内置"先停扫频"）。
+- 待办：同步 D 盘 → 重建 → 按 `verify_checklist.md` **§9** 复验（三档下 `SF` 都应 ≈1000）。
+
+### 2026-10-01 中午 · ★ 时基三档全部通过（T2 空白 = 看门狗 bug）+ 插值板测工具 + 一处悬空引用修复
+
+- **T1/T3 先过**（波形帧周期数 20 / 10，与"T3 的 fs 是 T1 两倍 → 同窗长周期数减半"完全吻合）。
+- **T2 整片空白** → 根因是 `spec_frame.v` 谱帧看门狗写死 **42ms**，而 T2（decim=4000）自研 FFT 一轮要
+  **81.9ms** → 看门狗提前超时、提前放掉 `spec_hold`，谱帧永远发不出去
+  （T1=20.5ms、T3=10.2ms 都在 42ms 内，所以**只有 T2 坏**）。修复：`wd_cnt` **22 → 25 位**（≈**335ms**）。
+  用户重建烧板后 **T2 复验通过**：1k/3k/5k 三柱 + `bin 82`。
+- **新增 `host/check_interp.py` + `run_check_interp.bat`**（插值板测一键工具）：
+  自动发 `停扫频 → 1000Hz → 方波 → 0x8A`，读回文本行并**直接给判定**
+  （`SF` ∈ 990~1010 → 生效；∈ 960~988 → 仍是旧值 976）。只用 pyserial，比瀑布图工具更轻。
+- **全库计时器扫查**（落实"改时间尺度参数要审所有固定超时"）：9 处计时器里**只有 `spec_frame` 这一处真坏**；
+  `freq_meter` / `key_debounce` / `uart_*` 走 50MHz 原始时钟，不受档位影响。记下两条待观察：
+  `self_fft_1024.cnt_cy`（**做 4096 点时必须扩到 ≥25 位**）、`fft_report.idle_cnt`（T2 下上报空隙变窄）。
+- **★ 修复一处悬空引用**：`hw_analysis/` 此前在 git 仓库**外面**，而全库 **60+ 处**引用它
+  （"期望值来源：`hw_analysis/probe_interp.py`"之类）。本轮把 **14 个可复用验证脚本收进仓库**
+  `wavecore/hw_analysis/`（附 README 说明用途与跑法），并把 **5 处写死的开发机绝对路径**
+  改成"从脚本位置反推仓库根"（换机器/换目录都能跑）。
+  验收：`check_protocol_frames.py` → **44 条帧 0 问题**；`scan_eol_style.py` → **185 文件全纯净**；
+  `probe_interp.py` 复跑 1kHz 方波 **977/2979/4980 → 999.4/2998.4/4997.8**（真值 1000/3000/5000）。
+- 文档同步：`host/README.md` 登记新工具 + T2/T3 一键 bat；`board/verify_checklist.md` 更新 §9 状态、
+  新增 **§9.2（T2 教训）**、**§10（插值复验）**、**§10.1（全库计时器扫查表）**；
+  `board/uart_protocol.md` 状态表改"0x8E 已联调通过"；`host/protocol.py` 文档串、
+  根 `README.md` 目录结构（协议 v1.19 / SK-001~038 / 新增 `hw_analysis/`）一并跟进。
+
+### 2026-10-01 中午 · ✅ 频谱插值板测通过（与数值模型逐字吻合）
+
+- 一键工具 `host\run_check_interp.bat` 实测（COM5，1kHz 方波）：
+  **`SF=999` / `S2=2998` / `S3=4997`**，对应真值 1000/3000/5000；
+  数值模型 `hw_analysis/probe_interp.py` 预测 999.4 / 2998.4 / 4997.8 —— **连取整差都一致**。
+- IP 通路对照 `S=0001001` **未受影响**（插值只改自研通路，符合设计）。
+  测量行同时正常：`F=0001000Hz V=1085 D=049.9% W=00500us TY=0`。
+- **误差 2.4% → 0.1%**。负向对照：`USE_INTERP=1'b0` 重综合应退回 976/2978/4980。
+- **至此 10/01 三项新功能（0x8E 瀑布图 / 0x8D 时基三档 / 频谱插值）全部板测通过。**
+  文档同步：`board/verify_checklist.md` §10 改为"已通过 + 实测表"、
+  `report/verify_result_2026-10-01.md` 新增 §7（时基三档）§8（插值）、
+  `report/feature_inventory.md` 三处状态、`host/README.md`、本文件。

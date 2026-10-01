@@ -33,7 +33,8 @@ import numpy as np
 FRAME_HEAD = bytes([0x5A, 0xA5, 0x02, 0x02, 0x00])
 N_BINS = 512
 FRAME_LEN = 2 + 1 + 2 + N_BINS + 1          # 518
-DF_HZ = 50000.0 / 1024.0                    # 48.828 Hz / bin
+DF_HZ = 50000.0 / 1024.0                    # 48.828 Hz / bin (T1 默认)
+TB_FS = {0: 50000.0, 1: 12500.0, 2: 100000.0}   # [0x8D] 时基档位 -> 等效采样率 Hz
 CMD_SPEC = bytes([0x5A, 0xA5, 0x8E, 0x00, 0x00, 0x8E])
 HIST = 240                                  # 瀑布图保留多少帧
 
@@ -206,6 +207,8 @@ def main():
     ap.add_argument("--freq", type=int, metavar="HZ", help="开机先设信号频率(0x85)，如 1000")
     ap.add_argument("--wave", type=int, choices=[0, 1, 2], metavar="N",
                     help="开机先设波形(0x88)：0=正弦 1=方波 2=三角")
+    ap.add_argument("--timebase", type=int, choices=[0, 1, 2], metavar="N",
+                    help="开机先设时基(0x8D)：0=T1 50k(默认) 1=T2 12.5k 2=T3 100k")
     ap.add_argument("--sweep", action="store_true",
                     help="开机先启动扫频(0x8B, 1k->20k) —— 瀑布出斜线")
     ap.add_argument("--sweep-stop", action="store_true",
@@ -240,6 +243,8 @@ def main():
             # [10-01] 扫频一旦开始会一直循环(设单音频率并不能关掉它, 实测确认),
             #   所以"看静态谱"这类脚本必须先显式停扫频。
             setup.append(make_frame(0x8B, bytes([0])))
+        if args.timebase is not None:
+            setup.append(make_frame(0x8D, bytes([args.timebase])))
         if args.freq is not None:
             setup.append(make_frame(0x85, (int(args.freq) & 0xFFFFFFFF).to_bytes(4, "little")))
         if args.wave is not None:
@@ -261,9 +266,14 @@ def main():
     ax1 = fig.add_subplot(2, 1, 1)
     ax2 = fig.add_subplot(2, 1, 2)
 
-    xkhz = np.arange(N_BINS) * DF_HZ / 1000.0
+    # [0x8D] 频率轴随当前时基档位缩放(谱帧本身不带 fs, 由本工具自己记住自己设的档位)
+    fs_hz = TB_FS[args.timebase] if args.timebase is not None else 50000.0
+    df_hz = fs_hz / 1024.0
+    xmax_khz = N_BINS * df_hz / 1000.0
+    print("  频率轴: 0~%.2f kHz (%.2f Hz/bin, 时基 T%d)" % (xmax_khz, df_hz, (args.timebase or 0) + 1))
+    xkhz = np.arange(N_BINS) * df_hz / 1000.0
     line, = ax1.plot(xkhz, np.zeros(N_BINS), lw=1.2)
-    ax1.set_xlim(0, 25)
+    ax1.set_xlim(0, xmax_khz)
     ax1.set_ylim(0, 260)
     ax1.set_xlabel("频率 (kHz)")
     ax1.set_ylabel("幅度码 (对数)")
@@ -272,7 +282,7 @@ def main():
 
     wf = np.zeros((HIST, N_BINS), dtype=np.uint8)
     img = ax2.imshow(wf, aspect="auto", origin="lower", cmap="inferno",
-                     vmin=0, vmax=255, extent=[0, 25, 0, HIST])
+                     vmin=0, vmax=255, extent=[0, xmax_khz, 0, HIST])
     ax2.set_xlabel("频率 (kHz)")
     ax2.set_ylabel("历史 (越往上越新)")
     fig.colorbar(img, ax=ax2, pad=0.01, fraction=0.04)
@@ -295,7 +305,7 @@ def main():
             line.set_ydata(cur)
             k = int(np.argmax(cur))
             pktxt.set_text("peak: %.2f kHz (bin %d) | frames=%d"
-                           % (k * DF_HZ / 1000.0, k, state["count"]))
+                           % (k * df_hz / 1000.0, k, state["count"]))
             img.set_data(wf)
         fig.canvas.draw_idle()
 
@@ -311,7 +321,7 @@ def main():
         line.set_ydata(cur)
         k = int(np.argmax(cur))
         pktxt.set_text("peak: %.2f kHz (bin %d) | frames=200"
-                       % (k * DF_HZ / 1000.0, k))
+                       % (k * df_hz / 1000.0, k))
         img.set_data(wf)
         if args.save:
             fig.savefig(args.save, dpi=110)

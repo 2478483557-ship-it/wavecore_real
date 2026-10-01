@@ -12,4 +12,4 @@ REM  the golden model (expected: bins 20 / 61 / 102, codes about 209 / 183 / 173
 REM
 REM  !! KEEP THIS FILE PURE ASCII, WITH CRLF LINE ENDINGS !!
 REM ===========================================================================
-call "%~dp0run_waterfall.bat" --sweep-stop --freq 1000 --wave 1 --save "%~dp0last_shot.png" --dump "%~dp0last_frame.txt"
+call "%~dp0run_waterfall.bat" --sweep-stop --timebase 0 --freq 1000 --wave 1 --save "%~dp0last_shot.png" --dump "%~dp0last_frame.txt"

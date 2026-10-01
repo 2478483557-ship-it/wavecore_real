@@ -19,6 +19,8 @@ module self_fft_1024 #(
     input  wire        rst_n,
     input  wire [7:0]  ad_cap,
     input  wire        run,          // 0x8A: 运行一次(脉冲); 平时静默
+    input  wire [31:0] decim_cfg,    // [0x8D] 时基抽取比(0 = 用参数 DECIM)
+    input  wire [31:0] fs_cfg,       // [0x8D] 等效采样率 Hz(0 = 用 50000)
     output reg  [23:0] res_freq,     // 峰值频率(Hz) = bin*50000/1024
     output reg  [23:0] res_f2,       // [调试] 第二峰
     output reg  [23:0] res_f3,       // [调试] 第三峰
@@ -33,6 +35,10 @@ module self_fft_1024 #(
     // [09-27 修复] 原此处有一句重复的 "assign dbg_st = st;" 位于 reg 声明之前,
     // 会把 st 隐式声明成 1 位 wire(Vivado 综合放过, 但 XSim 直接报
     // VRFC 10-3380 "identifier 'st' is used before its declaration")。已删, 只保留下方声明后的那一句。
+    //======== [0x8D] 时基: 外部配置优先, 未接(0)时回退到参数(保证默认/tb 行为不变) ========
+    wire [31:0] decim_use = (decim_cfg == 32'd0) ? DECIM    : decim_cfg;
+    wire [31:0] fs_use    = (fs_cfg    == 32'd0) ? 32'd50000 : fs_cfg;
+
     //======== 存储(单口) ========
     reg  [9:0]  addr;
     reg  [31:0] din;
@@ -211,7 +217,9 @@ module self_fft_1024 #(
     wire signed [9:0]  ic_dq  = ic_ns[18] ? -$signed({2'b00, ic_q}) : $signed({2'b00, ic_q});
     wire [17:0]        ic_bin8 = {ic_bin, 8'd0};
     wire signed [19:0] ic_x   = $signed({2'b0, ic_bin8}) + ic_dq;
-    wire signed [39:0] ic_f   = ($signed(ic_x) * 40'sd50000) >>> 18;
+    wire signed [31:0] fs_s   = fs_use;                       // 正数(fs<=100kHz, 最高位恒 0)
+    wire signed [51:0] ic_fp  = $signed(ic_x) * fs_s;         // 20b x 32b
+    wire signed [39:0] ic_f   = ic_fp >>> 18;                 // = (bin+δ) * fs / N
 
     // ---- 蝶形组合运算 ----
     wire signed [16:0] sumr = ar + br;        // 17位
@@ -304,7 +312,7 @@ module self_fft_1024 #(
                 //   wr_idx 只在采样节拍才 +1, 两次采样之间稳定 998 拍,
                 //   所以 ROM 的 1 拍读延迟恰好让 win_w 在采样节拍当拍 = wmem[wr_idx]。
                 w_addr <= wr_idx;
-                    if (dcnt==DECIM-1) begin
+                    if (dcnt==decim_use-32'd1) begin
                         dcnt <= 0;
                         addr <= wr_idx; we <= 1'b1;
                         // [09-28 修复·重要] ADC 是"偏移二进制"(中点 128), 而蝶形与找峰
@@ -489,9 +497,9 @@ module self_fft_1024 #(
                             end
                             else if (!ic_ok) begin               // 边界/整形差 -> 整数 bin(同旧行为)
                                 case (ip_pk)
-                                    2'd1: res_f2   <= (b2*32'd50000)>>10;
-                                    2'd2: res_f3   <= (b3*32'd50000)>>10;
-                                    default: res_freq <= (pk_bin*32'd50000)>>10;
+                                    2'd1: res_f2   <= (b2*fs_use)>>10;
+                                    2'd2: res_f3   <= (b3*fs_use)>>10;
+                                    default: res_freq <= (pk_bin*fs_use)>>10;
                                 endcase
                             end
                             else begin                            // 插值结果(负数截 0)
@@ -514,10 +522,10 @@ module self_fft_1024 #(
                         //   pk_bin>=336 (16406Hz) 起静默溢出, 读数恰好偏 -16384Hz。
                         //   改 32 位: 511*50000=25,550,000 << 2^32。
                         //   证据: hw_analysis/check_self_fft_overflow.py（逐 bin 复核）
-                        res_freq <= (pk_bin*32'd50000)>>10;
+                        res_freq <= (pk_bin*fs_use)>>10;
                         // [09-27] 门限: 幅度 >= 主峰/8 才认(与 IP 通路 A 行判据一致); 否则报 0 = 无有效峰
-                        res_f2   <= (m2 >= (pk_best>>3)) ? ((b2*32'd50000)>>10) : 24'd0;   // [09-30 BUGFIX] 24->32
-                        res_f3   <= (m3 >= (pk_best>>3)) ? ((b3*32'd50000)>>10) : 24'd0;   // [09-30 BUGFIX] 24->32
+                        res_f2   <= (m2 >= (pk_best>>3)) ? ((b2*fs_use)>>10) : 24'd0;
+                        res_f3   <= (m3 >= (pk_best>>3)) ? ((b3*fs_use)>>10) : 24'd0;
                     end
                     res_done <= 1'b1;                     // 单拍完成脉冲
                     st<=S_CAP; cap_on<=1'b0; wr_idx<=0; dcnt<=0;   // 回静默, 等下一条 0x8A

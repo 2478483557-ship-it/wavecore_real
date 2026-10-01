@@ -127,6 +127,7 @@ python hardware_smoke_test.py COM4
   - [10-01 新增] 开机自动设信号：`--freq 1000 --wave 1`（1kHz 方波）/ `--sweep`（启动扫频看瀑布斜线）
   - [10-01 新增] **一键 bat（双击即用，自带停扫频）**：`run_waterfall_1k_sq.bat`（方波→三柱）/
     `run_waterfall_1k_sin.bat`（正弦→单柱）/ `run_waterfall_sweep.bat`（扫频→斜线）/
+    `run_waterfall_T2.bat` / `run_waterfall_T3.bat`（先切时基 0x8D：T2 12.5kHz 细分辨 / T3 100kHz 展宽）/
     `run_waterfall_grab.bat`（抓 200 帧存 `last_shot.png` + `last_frame.txt`，诊断用）
   **在真正上板联调并截图验证前，任何文档/答辩/视频脚本仍不得把"我们的瀑布图"当成已完成功能对外展示。**
 
@@ -162,6 +163,26 @@ python spectrum_waterfall.py --demo --save x.png   # 自测出图
 - 上图 = 当前频谱（0~25kHz，512 点，对数压缩码）；下图 = 瀑布（历史滚动，**扫频时是一条斜线**）
 - 用**系统 Python 3.8**（pyserial/matplotlib/numpy 都装好；`run_waterfall.bat` 里写死了绝对路径）
 - 演示用预览图：`preview_waterfall_demo.png`（合成数据出的效果图）
+
+## check_interp.py —— 频谱插值板测 / 一键判读（2026-10-01 新增）
+
+验证**抛物线插值**（自研 FFT 通路的 `USE_INTERP`）有没有真的进这块板子的固件。
+
+```bash
+run_check_interp.bat                          # 双击（推荐）：自动选口 + 自动发帧 + 自动判读
+run_check_interp.bat COM5                     # 指定串口
+run_check_interp.bat COM5 --wave 0 --secs 8   # 换正弦 / 多读一会儿
+```
+
+- 动作：自动依次发 `停扫频(0x8B) → 设 1000Hz(0x85) → 方波(0x88) → 运行自研FFT(0x8A)`，
+  再周期性重触发，读回 `F/V`、`S/A`、`SF/S2/S3` 等文本行
+- **直接给判定**（1kHz 方波，T1 默认）：`SF` 990~1010 → 插值生效（旧行为是 **976**）；
+  `S2` 2990~3006（旧 2978）；`S3` 4990~5006（旧 4980）；中间地带会提示"把原始行发我"
+- 期望值来源：`hw_analysis/probe_interp.py`（数值模型，与 RTL 同口径）
+- **实测（2026-10-01 12:1x，COM5，1kHz 方波）**：`SF=999` / `S2=2998` / `S3=4997` —— 三项 PASS，
+  与模型 999.4 / 2998.4 / 4997.8 **逐字吻合**；IP 通路对照 `S=1001` 未受影响
+- 为什么单独做个工具：`0x8A/0x8B/0x8D` 都是**静默命令（无 ACK）**，只能靠"读数落在哪个区间"反推生效与否
+- 依赖：只用 pyserial，**不需要 matplotlib / numpy** —— 所以比瀑布图工具更轻、更快
 
 ## make_frames.py —— 命令帧生成 + 校验和自复核（2026-09-30 新增）
 

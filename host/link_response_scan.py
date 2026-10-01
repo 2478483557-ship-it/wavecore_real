@@ -116,6 +116,11 @@ def main():
     with serial.Serial(port, BAUD, timeout=0.2) as ser:
         parser = StreamParser()
         ser.reset_input_buffer()
+        # [10-01] 先停扫频(0x8B payload 0): 扫频一旦开始会持续循环, 不停掉会跟本次扫描打架
+        _body = bytes([0x8B, 0x00, 0x01, 0x00])
+        ser.write(b"\x5A\xA5" + _body + bytes([sum(_body) & 0xFF]))
+        ser.flush()
+        time.sleep(0.2)
         ser.write(command_set_waveform(0))     # 0x88 正弦
         ser.flush()
         time.sleep(0.3)

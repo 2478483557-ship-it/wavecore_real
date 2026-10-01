@@ -40,11 +40,17 @@ module fft_demo #(
     input  wire        clk,
     input  wire        rst_n,
     input  wire [7:0]  ad_cap,
+    input  wire [31:0] decim_cfg,   // [0x8D] 时基抽取比(0 = 用参数 DECIM)
+    input  wire [31:0] fs_cfg,      // [0x8D] 等效采样率 Hz(0 = 用 50000)
     output reg  [23:0] fft_hz,
     output reg  [23:0] fft_hz2,
     output reg         fft_done,
     output reg         fft_done2
 );
+
+    //======== [0x8D] 时基: 外部配置优先, 未接(0)时回退参数 ========
+    wire [31:0] decim_use = (decim_cfg == 32'd0) ? DECIM    : decim_cfg;
+    wire [31:0] fs_use    = (fs_cfg    == 32'd0) ? 32'd50000 : fs_cfg;
 
     //================ 时域缓存(块 RAM, 32768 bit) ================
     // 注意: 这个数组必须是块 RAM。若被综合成触发器, 会直接吃掉 32768 个 FF
@@ -115,7 +121,7 @@ module fft_demo #(
             s_data_tlast  <= 1'b0;
             case (st)
                 ST_CAP: begin                       // 写缓存(写口见上方独立 always)
-                    if (decim_cnt == DECIM - 1) begin
+                    if (decim_cnt == decim_use - 32'd1) begin
                         decim_cnt <= 32'd0;
                         // 写 f_ram 已挪到上方独立 always(必需: 保住块 RAM 推断)
                         if (wr_idx == NFFT - 1) begin
@@ -155,7 +161,7 @@ module fft_demo #(
 
     // ---- 写口: 独立 always, 不带复位(带复位会被拒绝推断为 RAM) ----
     // 放在 st 声明之后, 避免"先用后声明"(xvlog 严格模式会报 VRFC 10-3380)
-    wire        wr_en_w   = (st == ST_CAP) && (decim_cnt == DECIM - 32'd1);
+    wire        wr_en_w   = (st == ST_CAP) && (decim_cnt == decim_use - 32'd1);
     wire [11:0] wr_addr_w = wr_idx[11:0];       // 数组深 4096, 地址截到 12 位
 
     always @(posedge clk)
@@ -234,13 +240,13 @@ module fft_demo #(
                     //   该式被提升到左值 fft_hz 的 24 位, 于是 bin>=336 (4101Hz) 起静默溢出,
                     //   读数恰好偏 -16384Hz。改成 32 位后 4095*50000=204,750,000 不再溢出。
                     //   证据: hw_analysis/check_self_fft_overflow.py
-                    fft_hz  <= ((peak_bin * 32'd50000) + 32'd2048) >> 12;
+                    fft_hz  <= ((peak_bin * fs_use) + 32'd2048) >> 12;
                     fft_done <= 1'b1;
                     // 第二峰门限: 幅度≥主峰1/8 且 相隔>2 (方波3次谐波≈1/3~1/4 稳定通过)
                     if (sec_bin != 14'd0 && sec_mag >= {3'b0, peak_mag[17:3]} &&
                         (sec_bin > peak_bin + 14'd2 || sec_bin + 14'd2 < peak_bin)) begin
                         // [09-30 深夜 BUGFIX] 同上, 32 位防溢出
-                        fft_hz2  <= ((sec_bin * 32'd50000) + 32'd2048) >> 12;
+                        fft_hz2  <= ((sec_bin * fs_use) + 32'd2048) >> 12;
                         fft_done2 <= 1'b1;
                     end
                     bin_cnt  <= 14'd0;

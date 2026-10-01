@@ -95,14 +95,17 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 ```
 wavecore/
 ├── README.md          # 项目简介 + 复现步骤（本文件）
-├── src/               # 源码：board_top/dds_nco/sine_rom/dual_tone/freq_ctrl/da_send/ad_driver/freq_meter(三层抗噪)/measure_report/fft_demo/fft_report/hann_rom/wave_frame(触发)/uart_tx/uart_rx/cmd_decoder/bin2bcd/div_restore/uart_mirror(F1) …
-├── sim/               # 仿真 testbench
+├── src/               # 源码：board_top/dds_nco/sine_rom/freq_meter(三层抗噪)/measure_report/fft_demo/fft_report/hann_rom/wave_frame(触发)/uart_*/cmd_decoder/bin2bcd
+│                      #   + 自研 FFT 链路：self_fft_1024(含 Hann + 抛物线插值) / twiddle_rom / spec_compress / spec_buf / spec_frame(0x8E 谱帧)
+│                      #   + timebase(0x8D 时基档位)
+├── sim/               # 仿真：fft_check(6 场景 + 11 项 0x8E 谱检查) / mv_check / fft_demo_check / board_elab(整顶层端口精化)
 ├── build/             # 构建脚本(reset_and_build.tcl)
-├── board/             # 上板：XDC、引脚表、串口协议 v1.17、实测记录、样例日志、flash_guide.md
-├── host/              # 上位机(队友1 工位: serial_monitor_starter.py / wave_plot_example.py)
+├── board/             # 上板：XDC、引脚表、串口协议 v1.19、复验清单、实测记录、flash_guide.md
+├── host/              # 上位机：协议库 protocol.py + 一键工具(run_gui / run_waterfall[_T2/_T3] / run_check_interp / run_link_scan)（队友1 工位）
+├── hw_analysis/       # 验证脚本与数值金标准（probe_interp / verify_hann_window / verify_spectrum_frame / check_protocol_frames …，见其 README）
 ├── stm32/             # STM32+串口屏 资料归档（9/20 屏方案取消，F1 转发口保留）
-├── skill/             # 技能包 SK-001~037（抗噪/触发/FFT四坑/固化/资源判读/文档一致性/提交体检/回归期望值等，含 Golden 案例）
-└── report/            # 进度/任务书/协作须知/对标/升级/LLM记录/战报/自研FFT档案/backlog
+├── skill/             # 技能包 SK-001~038（抗噪/触发/FFT四坑/固化/资源判读/文档一致性/提交体检/回归期望值/位宽溢出等，含 Golden 案例）
+└── report/            # 进度/任务书/协作须知/对标/升级/LLM记录/战报/自研FFT档案/功能总表/backlog
 ```
 
 ## How to Reproduce / 复现步骤

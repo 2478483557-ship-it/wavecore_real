@@ -54,7 +54,13 @@ module spec_frame (
     reg [8:0]  pidx;
     reg [15:0] sum16;       // 16 位累加, 发送前取低 8 位(512 个 0xFF 也不会溢出)
     reg [8:0]  raddr_r;
-    reg [21:0] wd_cnt;      // [看门狗] ST_WAIT 计时: bit21=1 约 41.9ms
+    reg [24:0] wd_cnt;      // [看门狗] ST_WAIT 计时: bit24=1 约 **335.5ms**
+                            // [10-01 修] 原 bit21 = 41.9ms, 是按 T1(decim=1000, 一轮 20.5ms) 定的;
+                            //   但时基 T2(decim=4000) 下一轮要 1024x4000/50MHz = **81.9ms**,
+                            //   看门狗会提前超时 -> 释放 hold 回 IDLE -> **谱帧永远发不出去**
+                            //   (症状: T2 时瀑布图/频谱整片空白, T1/T3 正常)。
+                            //   改 335ms: 对 T2 的 83ms 有 4 倍余量, 又仍能兜住"真卡死"。
+                            //   ★ 教训: 改"时间尺度"类参数(时基/抽取比)时, 所有**固定超时**都要一起审。
                             // 正常一次运行约 22ms; 若真超时则释放 hold 回 IDLE,
                             // 绝不把测量流卡死成"必须按复位"。这是安全网, 正常情况下永远不触发。
 
@@ -76,7 +82,7 @@ module spec_frame (
             sum16   <= 16'd0;
             raddr_r <= 9'd0;
             fft_run <= 1'b0;
-            wd_cnt  <= 22'd0;
+            wd_cnt  <= 25'd0;
         end
         else begin
             tx_start <= 1'b0;
@@ -88,7 +94,7 @@ module spec_frame (
                         want    <= 1'b0;
                         req_l   <= 1'b1;          // 从这里开始 hold
                         fft_run <= 1'b1;          // 触发一次自研FFT
-                        wd_cnt  <= 22'd0;         // [看门狗] 归零
+                        wd_cnt  <= 25'd0;         // [看门狗] 归零
                         st      <= ST_WAIT;
                     end
                     else if (req) begin
@@ -96,11 +102,11 @@ module spec_frame (
                     end
                 end
                 ST_WAIT: begin
-                    wd_cnt <= wd_cnt + 22'd1;
+                    wd_cnt <= wd_cnt + 25'd1;
                     if (fft_done) begin
                         st <= ST_PRE;                      // 本轮完成
                     end
-                    else if (wd_cnt[21]) begin             // [看门狗] ~41.9ms 超时
+                    else if (wd_cnt[24]) begin             // [看门狗] ~335ms 超时(T2 的 83ms 也够)
                         req_l <= 1'b0;                     // 释放 hold, 不卡测量流
                         st    <= ST_IDLE;
                     end
