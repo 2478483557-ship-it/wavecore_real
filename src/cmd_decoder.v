@@ -11,7 +11,7 @@
 //   0x89 触发模式       payload=1B(0自由/1上升/2下降) -> trig_mode
 //   0x8B 扫频使能       payload=1B(0停/1扫) -> sweep_en
 //   0x8E 幅度谱帧请求   空负载 -> spec_req(1拍脉冲); 触发自研FFT并回 512 点谱帧
-//   [0x8D] 时基档位     1B: 0=T1(50k,默认) 1=T2(12.5k) 2=T3(100k) -> tb_set/tb_sel
+//   [0x8D] 时基档位     1B: 0=T1(50k,默认) 1=T2(12.5k) 2=T3(100k) 3=T4(200k) -> tb_set/tb_sel
 //   0x8C Vpp电压标定    payload=4B(knL,knH,保留,保留) -> cal_kn
 //        小端 16 位 KN = 每 LSB 多少 mV x1024(Q10), 默认 8000(=7.8125mV/LSB)。
 //        **KN=1024 是特殊调试值**: 1024>>10=1, 此时上报的 V 字段就是原始 LSB。
@@ -45,7 +45,7 @@ module cmd_decoder (
     output reg         cal_load,   // 0x8C 标定生效(1拍脉冲, 留给上位机做回执/闪灯)
     output reg         spec_req,   // 0x8E 幅度谱帧请求(1拍脉冲)
     output reg         tb_set,     // [0x8D] 时基档位生效(1拍脉冲)
-    output reg  [1:0]  tb_sel      // [0x8D] 目标档位 0=T1(50k) 1=T2(12.5k) 2=T3(100k)
+    output reg  [1:0]  tb_sel      // [0x8D] 目标档位 0=T1(50k) 1=T2(12.5k) 2=T3(100k) 3=T4(200k)
 );
 
     // 换算常量: round(2^32/5e7 x 2^24)
@@ -181,7 +181,7 @@ module cmd_decoder (
                                 8'h8E: begin             // 幅度谱帧请求(空负载)
                                     spec_req <= 1'b1;
                                 end
-                                8'h8D: begin             // [0x8D] 时基档位: 0=T1 50k / 1=T2 12.5k / 2=T3 100k
+                                8'h8D: begin             // [0x8D] 时基档位: 0=T1 50k / 1=T2 12.5k / 2=T3 100k / 3=T4 200k
                                     tb_set <= 1'b1;
                                     tb_sel <= pbuf[0][1:0];
                                 end

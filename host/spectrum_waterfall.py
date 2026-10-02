@@ -34,7 +34,7 @@ FRAME_HEAD = bytes([0x5A, 0xA5, 0x02, 0x02, 0x00])
 N_BINS = 512
 FRAME_LEN = 2 + 1 + 2 + N_BINS + 1          # 518
 DF_HZ = 50000.0 / 1024.0                    # 48.828 Hz / bin (T1 默认)
-TB_FS = {0: 50000.0, 1: 12500.0, 2: 100000.0}   # [0x8D] 时基档位 -> 等效采样率 Hz
+TB_FS = {0: 50000.0, 1: 12500.0, 2: 100000.0, 3: 200000.0}   # [0x8D] 时基档位 -> 等效采样率 Hz
 CMD_SPEC = bytes([0x5A, 0xA5, 0x8E, 0x00, 0x00, 0x8E])
 HIST = 240                                  # 瀑布图保留多少帧
 
@@ -207,8 +207,8 @@ def main():
     ap.add_argument("--freq", type=int, metavar="HZ", help="开机先设信号频率(0x85)，如 1000")
     ap.add_argument("--wave", type=int, choices=[0, 1, 2], metavar="N",
                     help="开机先设波形(0x88)：0=正弦 1=方波 2=三角")
-    ap.add_argument("--timebase", type=int, choices=[0, 1, 2], metavar="N",
-                    help="开机先设时基(0x8D)：0=T1 50k(默认) 1=T2 12.5k 2=T3 100k")
+    ap.add_argument("--timebase", type=int, choices=[0, 1, 2, 3], metavar="N",
+                    help="开机先设时基(0x8D)：0=T1 50k(默认) 1=T2 12.5k 2=T3 100k 3=T4 200k")
     ap.add_argument("--sweep", action="store_true",
                     help="开机先启动扫频(0x8B, 1k->20k) —— 瀑布出斜线")
     ap.add_argument("--sweep-stop", action="store_true",

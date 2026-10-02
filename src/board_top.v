@@ -126,7 +126,7 @@ module board_top (
 
 // ---- 0.7c [0x8D] 时基档位线(同样先声明、后使用) ----
 wire        tb_set_w;    // 0x8D 命令生效脉冲
-wire [1:0]  tb_sel_w;    // 目标档位 0/1/2
+wire [1:0]  tb_sel_w;    // 目标档位 0/1/2/3 (T1/T2/T3/T4)
 wire [31:0] tb_decim_w;  // 抽取比  -> 波形/自研FFT/IP FFT 三条通路
 wire [31:0] tb_fs_w;     // 等效采样率(Hz) -> 所有频率换算(不许再写字面量 50000)    // 0x89 触发模式
 

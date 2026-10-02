@@ -144,6 +144,8 @@ python link_response_scan.py --port COM4 --no-plot
 - **可信原因**：测量通路吃的是 25MSPS 的 ADC 流，不受"波形 50kHz 抽取"影响 → 反映**真实模拟带宽**
 - 输出：`link_response.csv`（频率/Vpp 中位数/范围/实测频率/波形类型）+ `link_response.png`（matplotlib 可用时）
 - 自动给出 **-3dB 可用带宽** 与建议的最高 fs 档位（≥2.5 倍可用带宽）
+- **[10-01] 扫频点在 25k~100 kHz 加密**（20→25→30→40→50→60→80→100 kHz）：这段正是时基 **T4 档（fs=200 kHz）
+  新增覆盖**的范围 —— 这条曲线的 -3dB 位置，直接决定 T4 是"真扩容"还是"只多了一段噪声"
 
 ## spectrum_waterfall.py —— 0x8E 频谱图 / 瀑布图小工具（2026-09-30 新增）
 
