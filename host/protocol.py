@@ -3,20 +3,31 @@
 WaveCore串口协议模块
 
 负责：
-1. 生成协议命令帧（0x81、0x83、0x85、0x87～0x8C；**v1.17 起 `V=` 是 4 位 mV**）
+1. 生成协议命令帧（0x81、0x83、0x85、0x87～0x8E；**v1.17 起 `V=` 是 4 位 mV**）
 2. 解析F/V、S/A、D/W、TY、SF/S2/S3文本行
-3. 解析1024点波形帧
+3. 解析1024点波形帧和512点幅度谱帧
 
 v1.17 变更(2026-09-30, **文本行有破坏性改动**):
   - `V=` 字段由 3 位 ADC 计数(LSB) 改成 **4 位毫伏(mV)**: `F=0001000Hz V=1085`
   - 配套新增 0x8C 电压标定命令
   - 解析结果里的键名 `vpp_lsb` -> `vpp_mv`(单位变了, 名字必须跟着变, 否则会静默算错)
+
+v1.20 变更(2026-10-01):
+  - 0x8D 选择T1～T4时基，等效采样率为12.5k～200kHz
+  - 0x8E 请求512点8bit对数压缩幅度谱帧
 """
 
 import re
 
 
 FRAME_HEADER = b"\x5A\xA5"
+
+TIMEBASE_SAMPLE_RATES = {
+    0: 50_000,
+    1: 12_500,
+    2: 100_000,
+    3: 200_000,
+}
 
 MEASUREMENT_PATTERN = re.compile(
     rb"^F=(\d{7})Hz V=(\d{4})$"
@@ -144,6 +155,18 @@ def command_set_vpp_cal(kn: int = DEFAULT_VPP_KN) -> bytes:
     return build_command(0x8C, kn.to_bytes(2, "little") + b"\x00\x00")
 
 
+def command_set_timebase(index: int) -> bytes:
+    """生成0x8D时基命令：0=T1、1=T2、2=T3、3=T4。"""
+    if index not in TIMEBASE_SAMPLE_RATES:
+        raise ValueError("时基档位必须是0、1、2或3")
+    return build_command(0x8D, bytes([index]))
+
+
+def command_request_spectrum() -> bytes:
+    """生成0x8E幅度谱请求命令。该命令没有负载。"""
+    return build_command(0x8E)
+
+
 def parse_ascii_line(line: bytes):
     """
     解析FPGA返回的ASCII行。
@@ -198,7 +221,7 @@ def parse_ascii_line(line: bytes):
     return None
 
 
-def parse_waveform_frame(frame: bytes):
+def parse_waveform_frame(frame: bytes, sample_rate_hz: int = 50_000):
     """
     解析FPGA返回的波形帧。
 
@@ -245,8 +268,57 @@ def parse_waveform_frame(frame: bytes):
 
     return {
         "type": "waveform",
-        "sample_rate_hz": 50_000,
+        # 二进制波形帧本身不携带时基，调用方必须传入当前0x8D档位对应的fs。
+        "sample_rate_hz": sample_rate_hz,
         "samples": samples,
+    }
+
+
+def parse_spectrum_frame(frame: bytes):
+    """
+    解析FPGA返回的512点幅度谱帧。
+
+    格式：
+    5A A5 02 02 00 + 512个8bit对数压缩幅度码 + SUM
+
+    频率轴不在帧内，由当前0x8D时基决定：f[k] = k * fs / 1024。
+    """
+    if len(frame) < 6:
+        raise ValueError("幅度谱帧太短")
+
+    if frame[:2] != FRAME_HEADER:
+        raise ValueError("幅度谱帧头错误")
+
+    frame_type = frame[2]
+    if frame_type != 0x02:
+        raise ValueError(
+            f"不是幅度谱帧，TYPE=0x{frame_type:02X}"
+        )
+
+    payload_length = int.from_bytes(frame[3:5], "big")
+    if payload_length != 512:
+        raise ValueError(
+            f"幅度谱点数错误：应为512，实际为{payload_length}"
+        )
+
+    expected_length = 5 + payload_length + 1
+    if len(frame) != expected_length:
+        raise ValueError(
+            f"帧长度错误：应为{expected_length}字节，"
+            f"实际为{len(frame)}字节"
+        )
+
+    received_checksum = frame[-1]
+    calculated_checksum = sum(frame[2:-1]) & 0xFF
+    if received_checksum != calculated_checksum:
+        raise ValueError(
+            f"校验失败：收到0x{received_checksum:02X}，"
+            f"计算得到0x{calculated_checksum:02X}"
+        )
+
+    return {
+        "type": "spectrum",
+        "magnitude_codes": list(frame[5:-1]),
     }
 
 class StreamParser:
@@ -255,13 +327,21 @@ class StreamParser:
 
     可以从同一个串口流中分离：
     1. F/V/S/A文本行
-    2. 0x5A 0xA5开头的二进制波形帧
+    2. 0x5A 0xA5开头的二进制波形帧与幅度谱帧
     """
 
     MAX_PAYLOAD_LENGTH = 4096
 
-    def __init__(self):
+    def __init__(self, sample_rate_hz: int = 50_000):
         self.buffer = bytearray()
+        self.sample_rate_hz = sample_rate_hz
+
+    def set_timebase(self, index: int):
+        """更新后续波形事件使用的采样率；应与已发送的0x8D档位一致。"""
+        try:
+            self.sample_rate_hz = TIMEBASE_SAMPLE_RATES[index]
+        except KeyError as error:
+            raise ValueError("时基档位必须是0、1、2或3") from error
 
     def feed(self, data: bytes):
         """
@@ -304,7 +384,18 @@ class StreamParser:
                 del self.buffer[:total_length]
 
                 try:
-                    event = parse_waveform_frame(frame)
+                    frame_type = frame[2]
+                    if frame_type == 0x01:
+                        event = parse_waveform_frame(
+                            frame,
+                            sample_rate_hz=self.sample_rate_hz,
+                        )
+                    elif frame_type == 0x02:
+                        event = parse_spectrum_frame(frame)
+                    else:
+                        raise ValueError(
+                            f"不支持的二进制帧类型：0x{frame_type:02X}"
+                        )
                     events.append(event)
                 except ValueError as error:
                     events.append({
@@ -421,6 +512,27 @@ def run_self_test():
         "5A A5 8C 00 04 40 1F 00 00 EF"
     )
     assert command_set_vpp_cal() == command_set_vpp_cal(DEFAULT_VPP_KN)
+    assert command_set_timebase(0) == bytes.fromhex(
+        "5A A5 8D 00 01 00 8E"
+    )
+    assert command_set_timebase(1) == bytes.fromhex(
+        "5A A5 8D 00 01 01 8F"
+    )
+    assert command_set_timebase(2) == bytes.fromhex(
+        "5A A5 8D 00 01 02 90"
+    )
+    assert command_set_timebase(3) == bytes.fromhex(
+        "5A A5 8D 00 01 03 91"
+    )
+    assert command_request_spectrum() == bytes.fromhex(
+        "5A A5 8E 00 00 8E"
+    )
+    try:
+        command_set_timebase(4)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("非法时基档位没有被拒绝")
 
     measurement = parse_ascii_line(
         b"F=0001000Hz V=1085\r\n"
@@ -472,6 +584,46 @@ def run_self_test():
         "name": "SF",
         "frequency_hz": 976,
     }
+
+    spectrum_payload = bytes(index & 0xFF for index in range(512))
+    spectrum_body = b"\x02\x02\x00" + spectrum_payload
+    spectrum_frame = (
+        FRAME_HEADER
+        + spectrum_body
+        + bytes([sum(spectrum_body) & 0xFF])
+    )
+    spectrum = parse_spectrum_frame(spectrum_frame)
+    assert spectrum["type"] == "spectrum"
+    assert spectrum["magnitude_codes"] == list(spectrum_payload)
+
+    parser = StreamParser()
+    assert parser.feed(spectrum_frame[:100]) == []
+    assert parser.feed(spectrum_frame[100:]) == [spectrum]
+
+    parser.set_timebase(3)
+    assert parser.sample_rate_hz == 200_000
+
+    waveform_payload = bytes(index & 0xFF for index in range(1024))
+    waveform_body = b"\x01\x04\x00" + waveform_payload
+    waveform_frame = (
+        FRAME_HEADER
+        + waveform_body
+        + bytes([sum(waveform_body) & 0xFF])
+    )
+    waveform = parser.feed(waveform_frame)
+    assert len(waveform) == 1
+    assert waveform[0]["type"] == "waveform"
+    assert waveform[0]["sample_rate_hz"] == 200_000
+    assert waveform[0]["samples"] == list(waveform_payload)
+
+    bad_spectrum_frame = bytearray(spectrum_frame)
+    bad_spectrum_frame[-1] ^= 0x01
+    try:
+        parse_spectrum_frame(bytes(bad_spectrum_frame))
+    except ValueError as error:
+        assert "校验失败" in str(error)
+    else:
+        raise AssertionError("错误校验和的幅度谱帧没有被拒绝")
 
     print("协议自检全部通过")
     print("设置1kHz：", command_1k.hex(" "))
