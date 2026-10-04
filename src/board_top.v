@@ -129,6 +129,8 @@ wire        tb_set_w;    // 0x8D 命令生效脉冲
 wire [1:0]  tb_sel_w;    // 目标档位 0/1/2/3 (T1/T2/T3/T4)
 wire [31:0] tb_decim_w;  // 抽取比  -> 波形/自研FFT/IP FFT 三条通路
 wire [31:0] tb_fs_w;     // 等效采样率(Hz) -> 所有频率换算(不许再写字面量 50000)    // 0x89 触发模式
+wire        pre_set_w;   // [0x8F] 预触发档位生效脉冲
+wire [1:0]  pre_sel_w;   // [0x8F] 预触发档 0=0%/1=25%/2=50%/3=75% -> wave_frame
 
     // ---- 0.7c [0x8E] 幅度谱帧相关线(同样必须先声明后使用; 下方 3.7/3.9 会用到) ----
     wire        spec_req_w;    // 0x8E 请求脉冲(cmd_decoder 输出)
@@ -159,6 +161,8 @@ wire [31:0] tb_fs_w;     // 等效采样率(Hz) -> 所有频率换算(不许再�
         .trig_mode   (trig_mode_w ),
         .tb_set      (tb_set_w    ),
         .tb_sel      (tb_sel_w    ),
+        .pre_set     (pre_set_w   ),   // [0x8F] 预触发
+        .pre_sel     (pre_sel_w   ),
         .sf_run      (sf_run_w    ),
         .sweep_en    (sweep_en_w  ),
         .cal_kn      (cal_kn_w    ),
@@ -354,6 +358,7 @@ wire [31:0] tb_fs_w;     // 等效采样率(Hz) -> 所有频率换算(不许再�
         .decim_cfg  (tb_decim_w),
         .req        (wave_req_w),
         .trig_mode  (trig_mode_w),
+        .pre_cfg    (pre_sel_w ),   // [0x8F] 预触发档(0=0% 1=25% 2=50% 3=75%)
         .meas_busy  (m_busy    ),
         .fft_busy   (fft_act | spec_act_w),   // 谱帧发送期间也让波形请求等着
         .uart_txd   (wav_txd   ),

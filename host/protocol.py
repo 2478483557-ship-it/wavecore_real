@@ -3,7 +3,8 @@
 WaveCore串口协议模块
 
 负责：
-1. 生成协议命令帧（0x81、0x83、0x85、0x87～0x8C；**v1.17 起 `V=` 是 4 位 mV**）
+1. 生成协议命令帧（0x81、0x83、0x85、0x87～**0x8F**；**v1.17 起 `V=` 是 4 位 mV**；
+   **v1.20 起含 0x8D 时基四档 / 0x8E 幅度谱帧；v1.21 起含 0x8F 预触发比例**）
 2. 解析F/V、S/A、D/W、TY、SF/S2/S3文本行
 3. 解析1024点波形帧
 
@@ -120,8 +121,8 @@ def command_set_sweep(enabled: bool) -> bytes:
     return build_command(0x8B, bytes([1 if enabled else 0]))
 
 
-# Vpp 标定的默认值: 7.8125 mV/LSB x1024
-DEFAULT_VPP_KN = 8000
+# Vpp 标定的默认值: 36.33 mV/LSB x1024（2026-10-02 实测标定并固化）
+DEFAULT_VPP_KN = 37203
 # 把 KN 设成这个值, 上报的 V 字段就是**原始 ADC 计数** (1024>>10 = 1)
 RAW_LSB_KN = 1024
 
@@ -131,7 +132,7 @@ def command_set_vpp_cal(kn: int = DEFAULT_VPP_KN) -> bytes:
     生成0x8C电压标定命令。
 
     kn = 每 LSB 对应多少 mV, 放大 1024 倍取整(Q10定标)。
-      - 默认 8000  -> 7.8125 mV/LSB, 按 0~2V 量程显示
+      - 默认 37203 -> 36.33 mV/LSB, 对应模块输入端的 ±5V 量程（2026-10-02 实测标定）
       - 传 1024    -> "原始 LSB 透传模式", 上报的 V 就是 ADC 计数, 专供标定用
 
     标定流程(两点法):
@@ -142,6 +143,106 @@ def command_set_vpp_cal(kn: int = DEFAULT_VPP_KN) -> bytes:
     if not 0 <= kn <= 0xFFFF:
         raise ValueError("kn 必须在 0～65535 之间")
     return build_command(0x8C, kn.to_bytes(2, "little") + b"\x00\x00")
+
+
+# ============================================================================
+# [0x8D 时基档位]（协议 v1.19 新增三档；v1.20 加 T4）
+#   档位 -> (名字, 抽取比 decim, 等效采样率 fs_hz)
+#   切换会同时改变：波形帧窗长 / 自研 FFT 的 Δf / IP FFT 窗长 / 频谱覆盖
+# ============================================================================
+TIMEBASE_TIERS = {
+    0: ("T1", 1000, 50000),      # 默认；频谱覆盖 0~25kHz，自研 Δf=48.8Hz
+    1: ("T2", 4000, 12500),      # 细分辨；0~6.25kHz，Δf=12.2Hz
+    2: ("T3", 500, 100000),      # 展宽；0~50kHz，Δf=97.7Hz
+    3: ("T4", 250, 200000),      # 超宽；0~100kHz，Δf=195.3Hz（范围换分辨率）
+}
+
+
+def command_set_timebase(tier: int) -> bytes:
+    """
+    生成 0x8D 时基档位命令（协议 v1.20）。
+
+    tier: 0=T1 50kHz(默认) / 1=T2 12.5kHz / 2=T3 100kHz / 3=T4 200kHz
+
+    ⚠️ **0x8D 是静默命令（没有 ACK / 回执行）** —— "发过去没反应"是**正常**的。
+       只能靠可观察量判断生效：同一个 1kHz 方波，自研谱峰 bin 号会变
+       （T1 bin20 / T2 bin82 / T3 bin10 / T4 bin5），波形帧里的周期数也会变（20/82/10/5）。
+
+    ⚠️ 上位机必须**自己记住当前档位**：0x8E 谱帧本身不带 fs，
+       否则频率轴会标错（`timebase_fs_hz(tier)` 取标轴用的 fs）。
+    """
+    if tier not in TIMEBASE_TIERS:
+        raise ValueError("tier 必须是 0/1/2/3（T1/T2/T3/T4）")
+    return build_command(0x8D, bytes([tier]))
+
+
+def timebase_fs_hz(tier: int) -> float:
+    """取某档位的等效采样率（Hz），用于给 0x8E 谱帧标频率轴。"""
+    if tier not in TIMEBASE_TIERS:
+        raise ValueError("tier 必须是 0/1/2/3（T1/T2/T3/T4）")
+    return float(TIMEBASE_TIERS[tier][2])
+
+
+# ============================================================================
+# [0x8E 幅度谱帧]（协议 v1.18 新增）
+#   请求：空负载 0x8E -> FPGA 触发一次自研 FFT 并回 518 字节二进制谱帧
+#   帧格式：5A A5 | 02 | 02 00 | 512B 幅度码 | SUM
+# ============================================================================
+SPECTRUM_FRAME_HEAD = bytes([0x5A, 0xA5, 0x02, 0x02, 0x00])
+SPECTRUM_BINS = 512
+SPECTRUM_FRAME_LEN = 2 + 1 + 2 + SPECTRUM_BINS + 1          # 518
+
+
+def command_request_spectrum() -> bytes:
+    """
+    生成 0x8E 幅度谱帧请求命令（空负载）。
+
+    帧长约 11.2ms@460800，可 10~20 帧/s 连续请求；配合 0x8B 扫频即得瀑布图。
+    """
+    return build_command(0x8E, b"")
+
+
+def parse_spectrum_frame(frame: bytes):
+    """
+    解析 518 字节幅度谱帧 -> 512 个幅度码（bytes）；不合法返回 None。
+
+    幅度码是**对数压缩**后的值：`y = (b << 4) | frac4`（b 为 17bit L1 模的前导位），
+    步进约 0.38dB、动态范围约 96dB。**它是相对量，不是 mV** ——
+    只有"哪几个 bin 明显高出底噪"才是有意义的判读。
+    """
+    if len(frame) != SPECTRUM_FRAME_LEN or frame[:5] != SPECTRUM_FRAME_HEAD:
+        return None
+    if (sum(frame[2:-1]) & 0xFF) != frame[-1]:
+        return None
+    return frame[5:-1]
+
+
+# ============================================================================
+# [0x8F 预触发比例]（协议 v1.21 新增）
+#   决定**触发点在 1024 点波形帧里的位置**：0%/25%/50%/75%
+#   实现见 src/wave_frame.v v6.0（采样缓冲改为永不归零的环形，触发时锁存写指针）
+# ============================================================================
+PRETRIGGER_RATIO = {0: 0.0, 1: 0.25, 2: 0.5, 3: 0.75}
+PRETRIGGER_LABEL = {0: "0%(默认)", 1: "25%", 2: "50%", 3: "75%"}
+
+
+def command_set_pretrigger(level: int) -> bytes:
+    """
+    生成 0x8F 预触发比例命令（协议 v1.21）。
+
+    level: 0=0%(默认) / 1=25% / 2=50% / 3=75%
+
+      - 0%  : 帧首点 = 触发点（与 v1.20 及以前**逐位等价**）
+      - 50% : 触发点位于帧**正中**（第 512 点）—— 图上能看到触发边沿**左侧**的半个波形
+
+    ⚠️ 它是"档位"不是一次性开关：发出后持续有效，直到下次修改或复位（**复位回 0%**）。
+    ⚠️ 静默命令（无 ACK）—— 只能靠波形图上**触发点的位置**判断是否生效。
+    ⚠️ 与 0x89 配合：先发 `command_set_trigger()` 选触发模式 → 再发本命令选预触发档
+       → 最后发 `command_request_waveform()` 请求波形。
+    """
+    if level not in PRETRIGGER_RATIO:
+        raise ValueError("level 必须是 0/1/2/3（0%/25%/50%/75%）")
+    return build_command(0x8F, bytes([level]))
 
 
 def parse_ascii_line(line: bytes):
@@ -413,7 +514,7 @@ def run_self_test():
     assert command_set_sweep(False) == bytes.fromhex(
         "5A A5 8B 00 01 00 8C"
     )
-    # 0x8C 电压标定(v1.17): KN=1024 -> 原始LSB模式; KN=8000 -> 默认 7.8125mV/LSB
+    # 0x8C 电压标定(v1.17): KN=1024 -> 原始LSB模式; KN=37203 -> 默认 36.33mV/LSB
     assert command_set_vpp_cal(1024) == bytes.fromhex(
         "5A A5 8C 00 04 00 04 00 00 94"
     )
@@ -472,6 +573,24 @@ def run_self_test():
         "name": "SF",
         "frequency_hz": 976,
     }
+
+    # [v1.20 新增] 时基档位与幅度谱帧
+    assert command_set_timebase(0) == bytes.fromhex("5AA58D0001008E")
+    assert command_set_timebase(1) == bytes.fromhex("5AA58D0001018F")
+    assert command_set_timebase(2) == bytes.fromhex("5AA58D00010290")
+    assert command_set_timebase(3) == bytes.fromhex("5AA58D00010391")
+    assert [timebase_fs_hz(i) for i in range(4)] == [50000.0, 12500.0, 100000.0, 200000.0]
+    assert command_request_spectrum() == bytes.fromhex("5AA58E00008E")
+    # [v1.21 新增] 预触发比例
+    assert command_set_pretrigger(0) == bytes.fromhex("5AA58F00010090")
+    assert command_set_pretrigger(1) == bytes.fromhex("5AA58F00010191")
+    assert command_set_pretrigger(2) == bytes.fromhex("5AA58F00010292")
+    assert command_set_pretrigger(3) == bytes.fromhex("5AA58F00010393")
+    assert PRETRIGGER_RATIO[2] == 0.5
+    _sf = b"\x5a\xa5\x02\x02\x00" + bytes(512) + bytes([0x04])
+    assert parse_spectrum_frame(_sf) == bytes(512)
+    assert parse_spectrum_frame(_sf[:-1]) is None        # 长度不对
+    assert parse_spectrum_frame(_sf[:-1] + b"\x05") is None   # 校验和不对
 
     print("协议自检全部通过")
     print("设置1kHz：", command_1k.hex(" "))

@@ -1,6 +1,13 @@
 //===========================================================================
-// 模块名   : wave_frame (v5.0 · blk_mem_gen IP 缓存版)
+// 模块名   : wave_frame (v6.0 · blk_mem_gen IP 缓存版 + [0x8F] 预触发)
 // 功能     : 0x83 请求一次, 上传最近 1024 点波形(默认 50kHz = 20.5ms; [0x8D] 时基可改)
+// [v6.0 新增 0x8F 预触发] 可选触发点在帧内的位置: 0% / 25% / 50% / 75%
+//            - 采集改为**永不归零的环形缓冲**(一直写 1024 深)
+//            - 触发瞬间锁存写指针 trig_wptr, 再写 (1024-pre_n) 点后冻结
+//            - 发送起点 cptr = trig_wptr - pre_n  -> 帧内第 pre_n 点就是触发点
+//            - **pre_n = 0 时行为与 v5.0 等价**(帧首点 = 触发后第一个采样点)
+// 验收     : 设 50% 预触发请求波形 -> 图上能看到触发边沿左侧的半个波形,
+//            且触发点位于帧正中(第 512 个点)
 // 存储     : 用 Block Memory Generator IP(blk_mem_gen_0, 1024x8 单口RAM)
 //           -> RAM 必进 BRAM, 无推断玄学(官方姿势, 替代手写 reg 数组)
 // 端口节奏 : 采集时 wea=1 写(addra=wr_idx); 发送时读 douta=mem[addra] 组合直读
@@ -16,6 +23,7 @@ module wave_frame (
     input  wire [31:0] decim_cfg,   // [0x8D] 时基抽取比(0 = 用 1000 默认)
     input  wire        req,
     input  wire [1:0]  trig_mode,   // 0x89: 0=自由 1=上升沿 2=下降沿
+    input  wire [1:0]  pre_cfg,     // [0x8F] 预触发档: 0=0% 1=25% 2=50% 3=75%
     input  wire        meas_busy,
     input  wire        fft_busy,
     output wire        uart_txd,
@@ -32,6 +40,14 @@ module wave_frame (
     reg         wea;
     wire [7:0]  douta;
 
+    // ---- [v6.0] 前置声明(必须先声明后使用) ----
+    //   下面 blk_mem_gen_0 的 .addra() 端口里直接用到了 wr_idx / wav_act_r,
+    //   若把声明留在例化之后, xvlog 会报 VRFC 10-2938 "already implicitly declared"
+    //   —— 即它们先被当成 **1 位隐式网**, 与 board_top.v 曾经修过的隐式线网是同一类坑。
+    reg [9:0]  wr_idx;      // 采集写指针(1024 深环形)
+    reg [31:0] dcnt;        // 抽取分频计数
+    reg        wav_act_r;   // 1 = 正在发送(此期间不写 RAM, 地址口归读)
+
     // 单口RAM: 写与读分时复用同一地址口(wea=0 时纯读)
     blk_mem_gen_0 u_bmg (
         .clka  (clk    ),
@@ -42,8 +58,7 @@ module wave_frame (
     );
 
     //======== 采集写入(50kHz) ========
-    reg [9:0]  wr_idx;
-    reg [31:0] dcnt;
+    // (wr_idx / dcnt 的声明已上移到 blk_mem_gen_0 例化之前, 见上)
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -53,11 +68,9 @@ module wave_frame (
             dina   <= 8'd0;
         end
         else if (!wav_act_r) begin
-            if (fill_rst) begin
-                wr_idx <= 10'd0;               // 触发归零: 帧从触发点开始
-                dcnt   <= 32'd0;
-            end
-            else if (dcnt == decim_use - 32'd1) begin
+            // [v6.0] 原"触发时归零写指针"的分支已删除 -> 采集永远是环形常写,
+            //   预触发所需的历史数据就靠"不归零"保留在缓冲里。
+            if (dcnt == decim_use - 32'd1) begin
                 dcnt <= 32'd0;
                 wea  <= 1'b1;                 // 写脉冲
                 dina <= ad_cap;
@@ -84,16 +97,20 @@ module wave_frame (
     localparam ST_IDLE=4'd0, ST_HOLD=4'd1, ST_HEAD=4'd2, ST_PAY=4'd3,
                ST_TAIL=4'd4, ST_DONE=4'd5, ST_FILL=4'd6;
     reg        req_l;
-    reg        wav_act_r;
+    // (wav_act_r 的声明已上移到 blk_mem_gen_0 例化之前, 见上)
     reg        guard;
     reg [3:0]  hidx;
     reg [9:0]  cptr;
     reg [9:0]  pidx;
     reg [7:0]  sum;
-    reg        fill_seen;
-    reg        prev_zero;     // wr_idx 是否刚经过 0
-    reg [1:0]  fill_wraps;    // (保留未用)
-    reg        fill_rst;      // [触发] 请采集块把写指针归零(单周期脉冲)
+    reg        fill_seen;     // (保留未用)
+    // [v6.0 预触发] 不再"归零写指针", 改为锁存触发位置 + 按点数冻结
+    reg [9:0]  trig_wptr;     // 触发瞬间的写指针(= 触发后第一个采样点的地址)
+    reg [9:0]  fill_cnt;      // 触发后已写入的采样点数
+    // 预触发点数: 0 / 256 / 512 / 768 (即 0% / 25% / 50% / 75%)
+    wire [9:0] pre_n = (pre_cfg == 2'd1) ? 10'd256 :
+                       (pre_cfg == 2'd2) ? 10'd512 :
+                       (pre_cfg == 2'd3) ? 10'd768 : 10'd0;
 
     // ---- 触发检测(120/136 迟滞) ----
     reg [7:0] prev_ad;
@@ -120,9 +137,8 @@ module wave_frame (
             sum      <= 8'd0;
             addra_s  <= 10'd0;
             fill_seen<= 1'b0;
-            prev_zero<= 1'b1;
-            fill_wraps<= 2'd0;
-            fill_rst  <= 1'b0;
+            trig_wptr<= 10'd0;
+            fill_cnt <= 10'd0;
         end
         else begin
             tx_start <= 1'b0;
@@ -132,30 +148,28 @@ module wave_frame (
                 ST_IDLE: if (req_l) st <= ST_HOLD;
                 ST_HOLD: begin
                     if (!meas_busy && !fft_busy && trig_ok) begin   // 等总线+等触发
-                        fill_rst  <= 1'b1;              // 请采集块归零写指针
-                        prev_zero <= 1'b1;              // 归零后从 0 开始
+                        trig_wptr <= wr_idx;      // [v6.0] 锁存触发位置(不再归零)
+                        fill_cnt  <= 10'd0;
                         st        <= ST_FILL;
                     end
                 end
                 ST_FILL: begin
-                    // 归零后写满一整圈(1024 新点) -> 冻结发送; 帧首点=触发点
-                    if (fill_rst) begin
-                        fill_rst <= 1'b0;          // 单周期脉冲结束
-                    end
-                    else if (wr_idx == 10'd0) begin
-                        if (!prev_zero) begin      // 绕回 0 = 1024 点已写满
-                            cptr     <= 10'd0;
-                            addra_s  <= 10'd0;
-                            hidx     <= 4'd0;
-                            pidx     <= 10'd0;
-                            sum      <= 8'd0;
-                            guard    <= 1'b0;
-                            wav_act_r<= 1'b1;
-                            st       <= ST_HEAD;
+                    // [v6.0] 触发后再写 (1024-pre_n) 个采样点就冻结;
+                    //   加上缓冲里原有的 pre_n 点历史, 合计正好覆盖 1024 点。
+                    if (wea) begin                      // 每个写脉冲 = 一个新采样点
+                        if (fill_cnt == (10'd1023 - pre_n)) begin
+                            // 发送起点回退 pre_n 点 -> 帧内第 pre_n 点 = 触发点
+                            cptr      <= trig_wptr - pre_n;
+                            addra_s   <= trig_wptr - pre_n;
+                            hidx      <= 4'd0;
+                            pidx      <= 10'd0;
+                            sum       <= 8'd0;
+                            guard     <= 1'b0;
+                            wav_act_r <= 1'b1;
+                            st        <= ST_HEAD;
                         end
-                        prev_zero <= 1'b1;
+                        else fill_cnt <= fill_cnt + 10'd1;
                     end
-                    else prev_zero <= 1'b0;
                 end
                 ST_HEAD: begin
                     if (guard) begin

@@ -45,16 +45,24 @@ module cmd_decoder (
     output reg         cal_load,   // 0x8C 标定生效(1拍脉冲, 留给上位机做回执/闪灯)
     output reg         spec_req,   // 0x8E 幅度谱帧请求(1拍脉冲)
     output reg         tb_set,     // [0x8D] 时基档位生效(1拍脉冲)
-    output reg  [1:0]  tb_sel      // [0x8D] 目标档位 0=T1(50k) 1=T2(12.5k) 2=T3(100k) 3=T4(200k)
+    output reg  [1:0]  tb_sel,     // [0x8D] 目标档位 0=T1(50k) 1=T2(12.5k) 2=T3(100k) 3=T4(200k)
+    output reg         pre_set,    // [0x8F] 预触发档位生效(1拍脉冲)
+    output reg  [1:0]  pre_sel     // [0x8F] 预触发档: 0=0% 1=25% 2=50% 3=75%
 );
 
     // 换算常量: round(2^32/5e7 x 2^24)
     localparam [31:0] M = 32'd1_441_150_920;
     // 频率上限(2^32 相位 / 20ns 采样, 建议 <= 12.5MHz 保证 256 点/周期余量)
     localparam [31:0] HZ_MAX = 32'd12_500_000;
-    // Vpp 标定默认值: 7.8125 mV/LSB (AD9280 0~2V 量程, 256 码) x1024 = 8000
+    // Vpp 标定默认值: 36.33 mV/LSB x1024 = 37203
+    //   [2026-10-02 实测标定] ATK_HS_AD_DA 模块的 AD 输入端量程是 **-5V~+5V**
+    //   （模块内部先做“÷5 再加 1V”的衰减/偏置，才送进 AD9280 的 0~2V），
+    //   所以 1 个 ADC 计数对应**模块外部输入端**约 36.3mV。
+    //   标定数据: 1kHz 方波实测 高 +2.54V / 低 -2.51V (Vpp = 5.05V) <-> 原始计数 139
+    //             => KN = round(5050*1024/139) = 37203，满量程约 9.26V(覆盖 ±5V)。
+    //   [!] 该值绑定模块上"DA 输出幅度电位器"的当前位置；动了电位器必须重新标定。
     // 注意: 这是"出厂假设值", 真值要用万用表两点法实测后由 0x8C 覆盖
-    localparam [15:0] KN_DEF = 16'd8000;
+    localparam [15:0] KN_DEF = 16'd37203;
 
     reg [2:0] st;
     localparam ST_H1 = 3'd0;   // 找 0x5A
@@ -94,7 +102,9 @@ module cmd_decoder (
             cal_load    <= 1'b0;
             spec_req    <= 1'b0;
             tb_set      <= 1'b0;
-            cal_kn      <= KN_DEF;             // 上电就是 7.8125mV/LSB 的默认标定
+            pre_set     <= 1'b0;
+            pre_sel     <= 2'd0;               // [0x8F] 上电默认 0% 预触发
+            cal_kn      <= KN_DEF;             // 上电即载入实测标定值 37203 (36.33mV/LSB)
             typ_r       <= 8'd0;
             len_r       <= 16'd0;
             sum_r       <= 8'd0;
@@ -109,6 +119,7 @@ module cmd_decoder (
             cal_load    <= 1'b0;
             spec_req    <= 1'b0;
             tb_set      <= 1'b0;
+            pre_set     <= 1'b0;
             if (rx_done) begin
                 case (st)
                     ST_H1: begin
@@ -184,6 +195,10 @@ module cmd_decoder (
                                 8'h8D: begin             // [0x8D] 时基档位: 0=T1 50k / 1=T2 12.5k / 2=T3 100k / 3=T4 200k
                                     tb_set <= 1'b1;
                                     tb_sel <= pbuf[0][1:0];
+                                end
+                                8'h8F: begin             // [0x8F] 预触发档: 0=0%/1=25%/2=50%/3=75%
+                                    pre_set <= 1'b1;
+                                    pre_sel <= pbuf[0][1:0];
                                 end
                                 default: ;               // 其余命令暂不支持
                             endcase

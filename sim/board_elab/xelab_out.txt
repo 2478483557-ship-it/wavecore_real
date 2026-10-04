@@ -1,0 +1,47 @@
+Vivado Simulator 2020.2
+Copyright 1986-1999, 2001-2020 Xilinx, Inc. All Rights Reserved.
+Running: D:/Xilinx/Vivado/2020.2/bin/unwrapped/win64.o/xelab.exe board_top -s board_elab -timescale 1ns/1ps 
+Multi-threading is on. Using 30 slave threads.
+Starting static elaboration
+Pass Through NonSizing Optimizer
+WARNING: [VRFC 10-3645] port 'cal_load' remains unconnected for this instance [C:/Users/Lenovo/WorkBuddy/2026-09-02-11-10-14/wavecore/sim/board_elab/board_top.v:148]
+WARNING: [VRFC 10-3645] port 'dbg_st' remains unconnected for this instance [C:/Users/Lenovo/WorkBuddy/2026-09-02-11-10-14/wavecore/sim/board_elab/board_top.v:378]
+Completed static elaboration
+Starting simulation data flow analysis
+Completed simulation data flow analysis
+Time Resolution for simulation is 1ps
+Compiling module work.key_debounce
+Compiling module work.sweep_ctrl
+Compiling module work.freq_ctrl
+Compiling module work.uart_rx_default
+Compiling module work.cmd_decoder
+Compiling module work.dual_tone
+Compiling module work.dds_nco
+Compiling module work.sine_rom
+Compiling module work.da_send
+Compiling module work.ad_driver
+Compiling module work.div_restore
+Compiling module work.freq_meter
+Compiling module work.bin2bcd(IN_W=24,OUT_W=28)
+Compiling module work.vpp_mv
+Compiling module work.uart_tx
+Compiling module work.measure_report
+Compiling module work.timebase
+Compiling module work.xfft_0
+Compiling module work.hann_rom
+Compiling module work.fft_demo
+Compiling module work.fft_report
+Compiling module work.blk_mem_gen_0
+Compiling module work.wave_frame
+Compiling module work.wave_id
+Compiling module work.blk_mem_gen_1
+Compiling module work.twiddle_rom
+Compiling module work.spec_compress
+Compiling module work.self_fft_1024_default
+Compiling module work.self_fft_report
+Compiling module work.spec_buf
+Compiling module work.spec_frame
+Compiling module work.uart_mirror
+Compiling module work.ila_0
+Compiling module work.board_top
+Built simulation snapshot board_elab
