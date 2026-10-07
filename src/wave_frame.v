@@ -113,15 +113,29 @@ module wave_frame (
                        (pre_cfg == 2'd3) ? 10'd768 : 10'd0;
 
     // ---- 触发检测(120/136 迟滞) ----
-    reg [7:0] prev_ad;
-    wire rise_det = (ad_cap >= 8'd136) && (prev_ad <= 8'd120);
-    wire fall_det = (ad_cap <= 8'd120) && (prev_ad >= 8'd136);
+    // [v6.1 修复"慢边沿漏触发"] 原实现要求"相邻两拍"完成跨阈(<=120 -> >=136)，
+    //   平缓边沿永远无法满足：1kHz 正弦在 fs=50kHz 下每拍仅变化约 3.5 个码(需 16 个)，
+    //   实测"正弦完全收不到波形、方波正常"。
+    //   改为状态位：先"蓄势"(回到本侧电位)，再越过对侧阈值即触发；触发后自动解除。
+    //   陡边沿下与原版行为等价(仍为单拍脉冲)。
+    reg armed_lo;   // 曾到低电位(<=120) -> 允许上升沿触发
+    reg armed_hi;   // 曾到高电位(>=136) -> 允许下降沿触发
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            armed_lo <= 1'b1;          // 上电默认允许上升沿触发
+            armed_hi <= 1'b0;
+        end
+        else if (ad_cap <= 8'd120) begin
+            armed_lo <= 1'b1;  armed_hi <= 1'b0;
+        end
+        else if (ad_cap >= 8'd136) begin
+            armed_hi <= 1'b1;  armed_lo <= 1'b0;
+        end
+    end
+    wire rise_det = armed_lo && (ad_cap >= 8'd136);
+    wire fall_det = armed_hi && (ad_cap <= 8'd120);
     wire trig_ok  = (trig_mode == 2'd0) ? 1'b1 :
                     (trig_mode == 2'd1) ? rise_det : fall_det;
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) prev_ad <= 8'd128;
-        else        prev_ad <= ad_cap;
-    end
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
