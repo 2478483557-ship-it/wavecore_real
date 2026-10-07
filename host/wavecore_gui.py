@@ -26,6 +26,7 @@ from protocol import (
     command_run_self_fft,
     command_set_frequency,
     command_set_preset,
+    command_set_pretrigger,
     command_set_second_frequency,
     command_set_sweep,
     command_set_timebase,
@@ -232,6 +233,16 @@ class WaveCoreApp:
         ("T4  200 kHz", 3),
     )
 
+    # [v1.21 0x8F] 预触发比例：决定触发点在 1024 点波形帧里的位置
+    #   0% 与升级前逐位等价；50% 时触发点落在帧正中央，可以看到触发沿左侧的波形
+    PRETRIGGER_CHOICES = (
+        ("0%（默认）", 0),
+        ("25%", 1),
+        ("50%", 2),
+        ("75%", 3),
+    )
+    PRETRIGGER_RATIO = (0.0, 0.25, 0.5, 0.75)
+
     def __init__(self, root):
         self.root = root
         self.worker = SerialWorker()
@@ -278,6 +289,11 @@ class WaveCoreApp:
         self.waveform_choice_var = tk.StringVar(value="正弦")
         self.trigger_choice_var = tk.StringVar(value="自由")
         self.timebase_choice_var = tk.StringVar(value=self.TIMEBASE_CHOICES[0][0])
+        self.pretrigger_choice_var = tk.StringVar(value=self.PRETRIGGER_CHOICES[0][0])
+        self.pretrigger_info_var = tk.StringVar(
+            value="预触发 0%：帧首点 = 触发点（与升级前一致）"
+        )
+        self.current_pretrigger_index = 0
         self.timebase_info_var = tk.StringVar()
         self.spectrum_info_var = tk.StringVar(value="尚未请求频谱")
         self.waveform_info_var = tk.StringVar(value="尚未请求波形")
@@ -534,10 +550,28 @@ class WaveCoreApp:
         ttk.Label(controls, textvariable=self.timebase_info_var).grid(
             row=4, column=3, columnspan=6, padx=(12, 0), pady=(6, 0), sticky="w"
         )
+        # ---- 行5: 预触发比例 (v1.21, 0x8F) ----
+        # 静默命令、无 ACK；只能靠波形图上"触发点的位置"判断是否生效。
+        # 0%=帧首点即触发点；50%=触发点位于帧正中（可见触发沿左侧波形）。
+        ttk.Label(controls, text="预触发：").grid(row=5, column=0, pady=(6, 0))
+        ttk.Combobox(
+            controls,
+            textvariable=self.pretrigger_choice_var,
+            values=tuple(label for label, _ in self.PRETRIGGER_CHOICES),
+            state="readonly",
+            width=13,
+        ).grid(row=5, column=1, padx=4, pady=(6, 0))
+        ttk.Button(controls, text="应用预触发", command=self.apply_pretrigger).grid(
+            row=5, column=2, padx=4, pady=(6, 0)
+        )
+        ttk.Label(controls, textvariable=self.pretrigger_info_var).grid(
+            row=5, column=3, columnspan=6, padx=(12, 0), pady=(6, 0), sticky="w"
+        )
+
         ttk.Label(
             controls,
             textvariable=self.applied_settings_var,
-        ).grid(row=5, column=0, columnspan=9, pady=(6, 0), sticky="w")
+        ).grid(row=6, column=0, columnspan=9, pady=(6, 0), sticky="w")
 
         self.plot_notebook = ttk.Notebook(self.root)
         self.plot_notebook.grid(row=3, column=0, sticky="nsew", padx=12, pady=(4, 10))
@@ -1004,6 +1038,7 @@ class WaveCoreApp:
             f"波形 {self.applied_waveform_name}｜"
             f"触发 {self.applied_trigger_name}｜"
             f"时基 T{self.current_timebase_index + 1}｜"
+            f"预触发 {self.PRETRIGGER_CHOICES[self.current_pretrigger_index][0]}｜"
             f"{sweep_text}｜{tone_text}"
         )
 
@@ -1030,6 +1065,48 @@ class WaveCoreApp:
                     f"波形（T{self.current_timebase_index + 1}，"
                     f"{fs_hz / 1000:g} kHz采样）"
                 )
+            )
+
+    def _selected_pretrigger_index(self):
+        choices = dict(self.PRETRIGGER_CHOICES)
+        try:
+            return choices[self.pretrigger_choice_var.get()]
+        except KeyError as error:
+            raise ValueError("请选择0%、25%、50%或75%预触发") from error
+
+    def apply_pretrigger(self):
+        """发送 0x8F 预触发比例（v1.21）。
+
+        静默命令：没有 ACK，只能靠波形图上触发点的位置判断是否生效。
+        与 0x89 配合：先选触发模式，再选预触发档，最后请求波形。
+        """
+        try:
+            index = self._selected_pretrigger_index()
+            frame = command_set_pretrigger(index)
+        except ValueError as error:
+            messagebox.showerror("预触发错误", str(error))
+            return
+
+        label = self.PRETRIGGER_CHOICES[index][0]
+        if not self._send(frame, f"已发送预触发 {label} 命令"):
+            return
+
+        self.current_pretrigger_index = index
+        ratio = self.PRETRIGGER_RATIO[index]
+        if index == 0:
+            self.pretrigger_info_var.set("预触发 0%：帧首点 = 触发点（与升级前一致）")
+        else:
+            self.pretrigger_info_var.set(
+                f"预触发 {label}：触发点位于帧内第 {int(1024 * ratio)} 点，"
+                f"可见触发沿左侧的波形"
+            )
+        self._update_applied_settings()
+
+        # 预触发档位改变后，已有波形图不再代表新设置，提示重新请求
+        if self.latest_waveform_samples and self.latest_waveform_sample_rate_hz:
+            self._draw_waveform(
+                self.latest_waveform_samples,
+                self.latest_waveform_sample_rate_hz,
             )
 
     def apply_timebase(self):
