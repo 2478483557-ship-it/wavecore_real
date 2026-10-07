@@ -63,3 +63,9 @@ xvlog_out.txt
 # 本仓库实际是 .../wavecore_real.git）的残留 clone，只有 1 个 "Initial commit"。
 # 不加这条，git 会把它当作"嵌套仓库"提交成一个没有 .gitmodules 的死链接。
 /wavecore/
+
+# 上位机运行时产物（数据记录 / 临时导出），不入库
+host/wavecore_measurements.csv
+host/*_measurements.csv
+host/*.csv
+last_*.log
