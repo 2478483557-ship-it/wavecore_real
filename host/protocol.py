@@ -14,7 +14,8 @@ v1.17 变更(2026-09-30, **文本行有破坏性改动**):
   - 解析结果里的键名 `vpp_lsb` -> `vpp_mv`(单位变了, 名字必须跟着变, 否则会静默算错)
 
 v1.20 变更(2026-10-01):
-  - 0x8D 选择T1～T4时基，等效采样率为12.5k～200kHz
+  - 0x8D 选择时基，等效采样率 12.5k～200kHz
+    **⚠️ 2026-10-14 上位机只开放 T1(50k) / T2(12.5k)**；T3/T4 已屏蔽，见 TIMEBASE_SAMPLE_RATES
   - 0x8E 请求512点8bit对数压缩幅度谱帧
 """
 
@@ -23,11 +24,25 @@ import re
 
 FRAME_HEADER = b"\x5A\xA5"
 
+# ============================================================================
+# [0x8D 时基档位 -> 等效采样率 Hz]   ★ 单一事实源，勿在别处重复定义
+#
+#   [2026-10-14 收窄] 演示/提交只保留 **T1(50k) 与 T2(12.5k)** 两档。
+#     原因：T3(100k)/T4(200k) 在实机切换后无响应，根因未定位
+#           （见 report/t3t4_disable_2026-10-14.md）。
+#     ★ **FPGA 侧四档仍然完整**，这里只是把上位机的"入口"撤了 ——
+#       固件、时基模块、文档里的四档描述都不受影响。
+#
+#   [恢复办法] 把下面两行注释去掉，并同步恢复：
+#       wavecore_gui.TIMEBASE_CHOICES     加回 T3/T4
+#       spectrum_waterfall.TB_FS          加回 2/3
+#       host/run_waterfall_T3.bat / T4.bat（已删，可在 git 里找回）
+# ============================================================================
 TIMEBASE_SAMPLE_RATES = {
-    0: 50_000,
-    1: 12_500,
-    2: 100_000,
-    3: 200_000,
+    0: 50_000,      # T1 默认（上电即此档）
+    1: 12_500,      # T2 细分辨率 Δf = 12.2 Hz
+    # 2: 100_000,   # T3 —— 2026-10-14 上位机屏蔽
+    # 3: 200_000,   # T4 —— 2026-10-14 上位机屏蔽
 }
 
 MEASUREMENT_PATTERN = re.compile(
@@ -160,7 +175,11 @@ def command_set_vpp_cal(kn: int = DEFAULT_VPP_KN) -> bytes:
 # [0x8D 时基档位]（协议 v1.19 新增三档；v1.20 加 T4）
 #   档位的等效采样率见文件上方的 TIMEBASE_SAMPLE_RATES（单一事实源，勿重复定义）
 #   切换会同时改变：波形帧窗长 / 自研 FFT 的 Δf / IP FFT 窗长 / 频谱覆盖
-#   1024 点自研 FFT 的 Δf 参考：T1 48.8Hz / T2 12.2Hz / T3 97.7Hz / T4 195.3Hz
+#   1024 点自研 FFT 的 Δf：T1 48.8Hz / T2 12.2Hz / (T3 97.7Hz / T4 195.3Hz 已屏蔽)
+#
+#   ⚠️ 2026-10-14：**上位机只开放 T1/T2**（T3/T4 实机无响应，根因未定位）。
+#      本函数对已屏蔽档位会直接抛 ValueError —— 这是刻意的，"发得出去但不生效"
+#      比"当场报错"更难排查。
 # ============================================================================
 
 
@@ -168,24 +187,32 @@ def command_set_timebase(tier: int) -> bytes:
     """
     生成 0x8D 时基档位命令（协议 v1.20）。
 
-    tier: 0=T1 50kHz(默认) / 1=T2 12.5kHz / 2=T3 100kHz / 3=T4 200kHz
+    tier: 目前开放 0=T1 50kHz(默认) / 1=T2 12.5kHz
+          （2=T3 100kHz / 3=T4 200kHz 已由上位机屏蔽，见 2026-10-14 说明）
 
     ⚠️ **0x8D 是静默命令（没有 ACK / 回执行）** —— "发过去没反应"是**正常**的。
        只能靠可观察量判断生效：同一个 1kHz 方波，自研谱峰 bin 号会变
-       （T1 bin20 / T2 bin82 / T3 bin10 / T4 bin5），波形帧里的周期数也会变（20/82/10/5）。
+       （T1 bin20 / T2 bin82），波形帧里的周期数也会变（20 / 82）。
 
     ⚠️ 上位机必须**自己记住当前档位**：0x8E 谱帧本身不带 fs，
        否则频率轴会标错（用 `timebase_fs_hz(tier)` 取标轴用的 fs）。
     """
     if tier not in TIMEBASE_SAMPLE_RATES:
-        raise ValueError("tier 必须是 0/1/2/3（T1/T2/T3/T4）")
+        raise ValueError(
+            "tier 必须属于当前开放的档位 %s（T%d～T%d）；T3/T4 已于 2026-10-14 屏蔽"
+            % (
+                "/".join(str(k) for k in sorted(TIMEBASE_SAMPLE_RATES)),
+                min(TIMEBASE_SAMPLE_RATES) + 1,
+                max(TIMEBASE_SAMPLE_RATES) + 1,
+            )
+        )
     return build_command(0x8D, bytes([tier]))
 
 
 def timebase_fs_hz(tier: int) -> float:
     """取某档位的等效采样率（Hz），用于给 0x8E 谱帧标频率轴。"""
     if tier not in TIMEBASE_SAMPLE_RATES:
-        raise ValueError("tier 必须是 0/1/2/3（T1/T2/T3/T4）")
+        raise ValueError("tier 不属于当前开放的档位 %s" % sorted(TIMEBASE_SAMPLE_RATES))
     return float(TIMEBASE_SAMPLE_RATES[tier])
 
 
@@ -402,7 +429,10 @@ class StreamParser:
         try:
             self.sample_rate_hz = TIMEBASE_SAMPLE_RATES[index]
         except KeyError as error:
-            raise ValueError("时基档位必须是0、1、2或3") from error
+            raise ValueError(
+                "时基档位必须属于当前开放的 %s（T3/T4 已于 2026-10-14 屏蔽）"
+                % sorted(TIMEBASE_SAMPLE_RATES)
+            ) from error
 
     def feed(self, data: bytes):
         """
@@ -579,12 +609,16 @@ def run_self_test():
     assert command_set_timebase(1) == bytes.fromhex(
         "5A A5 8D 00 01 01 8F"
     )
-    assert command_set_timebase(2) == bytes.fromhex(
-        "5A A5 8D 00 01 02 90"
-    )
-    assert command_set_timebase(3) == bytes.fromhex(
-        "5A A5 8D 00 01 03 91"
-    )
+    # [2026-10-14] T3/T4 已由上位机屏蔽 —— 现在**必须被拒绝**。
+    #   判据理由：屏蔽档位若还能发出去，就是"发得出去但不生效"，
+    #   比当场报错难排查得多（0x8D 是静默命令，没有 ACK）。
+    for _blocked in (2, 3):
+        try:
+            command_set_timebase(_blocked)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("已屏蔽的 T%d 没有被拒绝" % (_blocked + 1))
     assert command_request_spectrum() == bytes.fromhex(
         "5A A5 8E 00 00 8E"
     )
@@ -661,8 +695,8 @@ def run_self_test():
     assert parser.feed(spectrum_frame[:100]) == []
     assert parser.feed(spectrum_frame[100:]) == [spectrum]
 
-    parser.set_timebase(3)
-    assert parser.sample_rate_hz == 200_000
+    parser.set_timebase(1)
+    assert parser.sample_rate_hz == 12_500
 
     waveform_payload = bytes(index & 0xFF for index in range(1024))
     waveform_body = b"\x01\x04\x00" + waveform_payload
@@ -674,7 +708,7 @@ def run_self_test():
     waveform = parser.feed(waveform_frame)
     assert len(waveform) == 1
     assert waveform[0]["type"] == "waveform"
-    assert waveform[0]["sample_rate_hz"] == 200_000
+    assert waveform[0]["sample_rate_hz"] == 12_500
     assert waveform[0]["samples"] == list(waveform_payload)
 
     bad_spectrum_frame = bytearray(spectrum_frame)

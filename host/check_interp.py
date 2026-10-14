@@ -95,8 +95,8 @@ def main():
     ap.add_argument("--freq", type=int, default=1000, help="信号频率 Hz（默认 1000）")
     ap.add_argument("--wave", type=int, choices=[0, 1, 2], default=1,
                     help="波形: 0=正弦 1=方波(默认) 2=三角")
-    ap.add_argument("--timebase", type=int, choices=[0, 1, 2, 3],
-                    help="顺带切时基(0x8D): 0=T1 50k 1=T2 12.5k 2=T3 100k 3=T4 200k；不给就不动")
+    ap.add_argument("--timebase", type=int, choices=[0, 1],
+                    help="顺带切时基(0x8D): 0=T1 50k 1=T2 12.5k；不给就不动 （T3/T4 已于 2026-10-14 屏蔽）")
     ap.add_argument("--secs", type=float, default=5.0, help="采集秒数（默认 5）")
     args = ap.parse_args()
 

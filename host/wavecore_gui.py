@@ -226,11 +226,12 @@ class WaveCoreApp:
         ("1 MHz", 3, 1_000_000),
     )
 
+    # [2026-10-14 收窄] 下拉框只留 T1/T2 —— T3(100k)/T4(200k) 实机切换后无响应，
+    #   根因未定位，先从界面上撤掉入口。FPGA 侧四档仍在。
+    #   恢复办法见 host/protocol.py 里 TIMEBASE_SAMPLE_RATES 上方的注释。
     TIMEBASE_CHOICES = (
         ("T1  50 kHz", 0),
         ("T2  12.5 kHz", 1),
-        ("T3  100 kHz", 2),
-        ("T4  200 kHz", 3),
     )
 
     # [v1.21 0x8F] 预触发比例：决定触发点在 1024 点波形帧里的位置
@@ -1047,7 +1048,11 @@ class WaveCoreApp:
         try:
             return choices[self.timebase_choice_var.get()]
         except KeyError as error:
-            raise ValueError("请选择T1、T2、T3或T4时基") from error
+            # [2026-10-14] 选项由 TIMEBASE_CHOICES 决定（当前只开放 T1/T2），
+            #   这里动态列出，避免以后恢复档位时提示文字忘了同步。
+            raise ValueError(
+                "请选择 %s 时基" % "、".join(label for label, _ in self.TIMEBASE_CHOICES)
+            ) from error
 
     def _update_timebase_info(self):
         fs_hz = TIMEBASE_SAMPLE_RATES[self.current_timebase_index]
