@@ -12,6 +12,7 @@ REM ===========================================================================
 cd /d %~dp0
 
 set PY=C:\Users\Lenovo\AppData\Local\Programs\Python\Python38\python.exe
+if not exist "%PY%" for /f "delims=" %%i in ('where python 2^>nul') do set PY=%%i
 if not exist "%PY%" goto nopy
 
 echo Starting ... if no serial port shows up, click "refresh" and pick the COM port.

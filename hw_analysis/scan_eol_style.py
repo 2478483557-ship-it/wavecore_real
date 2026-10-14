@@ -14,7 +14,8 @@ scan_eol_style.py   (只读诊断，不改任何文件)
 """
 import os
 
-ROOT = r"C:\Users\Lenovo\WorkBuddy\2026-09-02-11-10-14\wavecore"
+# [2026-10-14] 原来写死开发机绝对路径 -> 改为从脚本位置反推仓库根，换机器可直接跑。
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 只扫"人写的源文件"；下面的东西天然会是"混排"或本就是二进制，判它没意义。
 SKIP_DIRS = {".git", "wavecore.runs", "wavecore.cache", "wavecore.gen",
