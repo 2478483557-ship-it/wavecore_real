@@ -376,7 +376,7 @@
   对应本版新增的三项：**频谱抛物线插值**（32 位乘法是 DSP 增量的相关项）+ **时基 T4 分支** + **谱帧看门狗位宽**。
 - **全库数字同步 14 个文件**：README / build/README / board/verify_checklist / backlog / demo_package /
   demo_video_script / design_report / engineering_challenges / feature_inventory / interview_self_intro /
-  project_intro / qa_prep / resource_compare / 新手操作指南。
+  project_intro / qa_prep / resource_compare / beginner_guide（原"新手操作指南"，2026-10-14 更名为英文）。
   **历史记录文件按 SK-033 硬规矩①保持原值**（progress_log / verify_result_2026-09-30 / verify_result_2026-10-01 /
   learning_notes / upgrade_v3_plan / session_summary_* / lut_slim_report 等），
   并已逐文件核对：残留的旧数字**只出现在历史文件里**。
