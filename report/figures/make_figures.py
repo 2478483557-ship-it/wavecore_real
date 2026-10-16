@@ -21,7 +21,8 @@ for f in ['Microsoft YaHei', 'SimHei']:
         continue
 matplotlib.rcParams['axes.unicode_minus'] = False
 
-OUT = r'C:/Users/Lenovo/WorkBuddy/2026-09-02-11-10-14/wavecore/report/figures'
+import os
+OUT = os.path.dirname(os.path.abspath(__file__))
 C_FPGA='#E6F1FB'; C_S='#185FA5'; C_DSP='#E1F5EE'; C_D='#0F6E56'
 C_MEAS='#FAEEDA'; C_M='#854F0B'; C_UI='#EEEDFE'; C_U='#534AB7'
 C_ANA='#FAECE7'; C_A='#993C1D'
