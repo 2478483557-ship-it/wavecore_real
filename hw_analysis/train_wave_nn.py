@@ -184,7 +184,7 @@ with open(os.path.join(ROOT, 'src', 'nn_w1.hex'), 'w', encoding='ascii') as f:
 with open(os.path.join(ROOT, 'src', 'nn_b1.hex'), 'w', encoding='ascii') as f:
     f.write('\n'.join('%04X' % (v & 0xFFFF) for v in b1q) + '\n')
 with open(os.path.join(ROOT, 'src', 'nn_w2.hex'), 'w', encoding='ascii') as f:
-    f.write('\n'.join('%02X' % (v & 0xFF) for v in W2q.flatten()) + '\n')
+    f.write('\n'.join('%04X' % (v & 0xFFFF) for v in W2q.flatten()) + '\n')  # [10-16 修复] 原为 %02X: W2 是 int16, 只存低 8 位 -> 载入的 W2 全是垃圾
 with open(os.path.join(ROOT, 'src', 'nn_b2.hex'), 'w', encoding='ascii') as f:
     f.write('\n'.join('%04X' % (v & 0xFFFF) for v in b2q) + '\n')
 print('权重已导出(16bit): nn_w1(%d) nn_b1(%d) nn_w2(%d) nn_b2(%d)' % (
