@@ -138,6 +138,9 @@ wire        ovl_en_w;    // [0x91] 50% 帧重叠使能 -> self_fft_1024  [10-16]
 wire        ifft_set_w;  // [0x92] IFFT 触发脉冲  [10-16]
 wire [9:0]  ifft_lo_w;   // [0x92] 掩膜低 bin
 wire [9:0]  ifft_hi_w;   // [0x92] 掩膜高 bin
+wire        play_set_w;  // [0x93] 回放档位生效脉冲
+wire        play_en_w;   // [0x93] 回放使能 -> self_fft_1024
+wire [7:0]  da_play_w;   // [0x93] 回放样点 -> da_send
 
     // ---- 0.7c [0x8E] 幅度谱帧相关线(同样必须先声明后使用; 下方 3.7/3.9 会用到) ----
     wire        spec_req_w;    // 0x8E 请求脉冲(cmd_decoder 输出)
@@ -177,6 +180,8 @@ wire [9:0]  ifft_hi_w;   // [0x92] 掩膜高 bin
         .ifft_set    (ifft_set_w  ),   // [0x92] IFFT 频域滤波
         .ifft_lo     (ifft_lo_w   ),
         .ifft_hi     (ifft_hi_w   ),
+        .play_set    (play_set_w  ),   // [0x93] IFFT 结果回放
+        .play_sel    (play_en_w   ),
         .sf_run      (sf_run_w    ),
         .sweep_en    (sweep_en_w  ),
         .cal_kn      (cal_kn_w    ),
@@ -251,7 +256,8 @@ wire [9:0]  ifft_hi_w;   // [0x92] 掩膜高 bin
     // ---- 3. DAC 接口(时序对齐后送出) ----
     da_send u_da (
         .clk     (sys_clk  ),
-        .sine_in (sine_out ),
+                // [10-16] 回放使能时用 IFFT 结果驱动 DAC, 否则仍由 DDS 驱动(DDS 功能不受影响)
+        .sine_in (play_en_w ? da_play_w : sine_out ),
         .da_clk  (da_clk   ),
         .da_data (da_data  )
     );
@@ -397,6 +403,8 @@ wire [9:0]  ifft_hi_w;   // [0x92] 掩膜高 bin
         .fs_cfg   (tb_fs_w   ),
         .win_cfg  (win_cfg_w ),
         .ovl_en   (ovl_en_w  ),   // [0x91] 50% 帧重叠
+        .play_en  (play_en_w ),   // [0x93] IFFT 结果回放
+        .da_play  (da_play_w ),
         .inv_run  (ifft_set_w),   // [0x92] IFFT 频域滤波
         .mask_lo  (ifft_lo_w ),
         .mask_hi  (ifft_hi_w ),   // [0x90] 窗函数运行时可切换

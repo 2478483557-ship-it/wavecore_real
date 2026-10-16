@@ -216,6 +216,21 @@ def timebase_fs_hz(tier: int) -> float:
     return float(TIMEBASE_SAMPLE_RATES[tier])
 
 
+def command_play_ifft(on: bool) -> bytes:
+    """
+    生成 0x93 IFFT 结果回放命令（协议 v1.22, 2026-10-16 新增）。
+
+    on=True : 把 IFFT 的**时域结果循环送 DAC** —— 接示波器就能看到
+              "设了掩膜之后波形变了"，是最直观的演示。
+              同时 DDS 让出 DAC（关闭回放即恢复）。
+    on=False: 回到 DDS 驱动 DAC（默认）。
+
+    幅度换算: 往返衰减 1/N, IFFT 输出约 ±24; DAC 是 8bit 偏置二进制(中值 128),
+              硬件里取 5 倍增益((y<<2)+y)并按 ±127 饱和。
+    """
+    return build_command(0x93, bytes([1 if on else 0]))
+
+
 def command_ifft_filter(mask_lo: int, mask_hi: int) -> bytes:
     """
     生成 0x92 IFFT 频域滤波命令（协议 v1.22, 2026-10-16 新增）。

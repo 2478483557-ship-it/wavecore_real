@@ -26,6 +26,8 @@ module self_fft_1024 #(
     input  wire        inv_run,      // [0x92] IFFT 频域滤波: 在已完成的正向 FFT 上再跑一趟反向  (10-16 新增)
     input  wire [9:0]  mask_lo,      // [0x92] 掩膜低 bin(含)
     input  wire [9:0]  mask_hi,      // [0x92] 掩膜高 bin(含)
+    input  wire        play_en,      // [0x93] 回放使能: 循环把 mem 里的时域结果送 DAC  (10-16 新增)
+    output reg  [7:0]  da_play,      // [0x93] 送 AD9708 的 8bit 偏置二进制样点
     output reg  [23:0] res_freq,     // 峰值频率(Hz) = bin*50000/1024
     output reg  [23:0] res_f2,       // [调试] 第二峰
     output reg  [23:0] res_f3,       // [调试] 第三峰
@@ -143,7 +145,8 @@ module self_fft_1024 #(
                S_NB   = 5'd15,   // [v1.2] 第 4 趟: 采集三个峰的左右邻 bin
                S_NBRD = 5'd16,
                S_ICALC= 5'd17,   // [v1.2] 插值计算(减法循环除法)
-               S_PRE  = 5'd18;   // [10-16] 50% 帧重叠: 预载上一帧保存的后半 512 点
+               S_PRE  = 5'd18,   // [10-16] 50% 帧重叠: 预载上一帧保存的后半 512 点
+               S_PLAY = 5'd19;   // [10-16] 回放: 循环读 mem 送 DAC
 
     //======== [10-16] 50% 帧重叠的配套存储 ========
     // 动机: 采集与 FFT **共用同一块 RAM**(原地 FFT 会摧毁数据), 所以上一帧的后半段
@@ -162,6 +165,13 @@ module self_fft_1024 #(
     //   镜像必须一起掩: 实信号的谱共轭对称, 只掩一半会留下复数残留。
     // 增益: 每级 >>1 -> 往返衰减 1/N(见 model_ifft.py)。本版先保证算法正确。
     reg  inv_mode;
+    //======== [10-16] 回放通路(把 IFFT 结果送 DAC) ========
+    // IFFT 输出 = 时域波形, 就在 mem 里(存储序即时间序)。
+    // 幅度换算: 往返衰减 1/N(IFFT 输出约 +-24), 8bit DAC 居中 128 需要 +-128
+    //   -> 增益取 5 倍((y<<2)+y), 再按 +-127 饱和, 最后加 128 转成偏置二进制。
+    reg  [9:0]  play_idx;
+    reg  signed [19:0] play_g;
+    reg  signed [19:0] play_c;
     reg  inv_pend;   // inv_run 只有 1 拍; 若 FSM 当时不在 S_CAP 就丢了 -> 先锁存
     always @(posedge clk or negedge rst_n)
         if (!rst_n)        inv_pend <= 1'b0;
@@ -337,7 +347,8 @@ module self_fft_1024 #(
             addr<=0; din<=0; we<=0; tw_addr<=0; w_addr<=0;
             stage<=0; base<=0; j<=0; half<=10'd512; nblk<=10'd1; blk<=0; i1<=0; i2<=0;
             first_run<=1'b1; pre_idx<=10'd0;      // [10-16] 50% 重叠: 复位后首帧采满
-            inv_mode<=1'b0; inv_pend<=1'b0;      // [10-16] IFFT: 必须复位! 否则正向通路的
+            inv_mode<=1'b0; inv_pend<=1'b0; play_idx<=10'd0; play_g<=20'sd0; play_c<=20'sd0;
+            da_play<=8'd128;                     // [10-16] IFFT: 必须复位! 否则正向通路的
                                                   //   `inv_mode ? rev10(..) : ..` 地址选择会是 X
             ar<=0;ai<=0;br<=0;bi<=0;cr<=0;ci<=0;
             p_rr<=0;p_ii<=0;p_ri<=0;p_ir<=0;
@@ -409,6 +420,26 @@ module self_fft_1024 #(
 
             case (st)
                 S_CAP: ;    // [09-19 修复] 空项: 防 default 吞掉"采集结束->S_START"的赋值
+                S_PLAY: begin
+                    // addr 每 decim_use 拍才变 -> 读延迟被吃掉, dout 在采样当拍就是 mem[play_idx]
+                    addr <= play_idx;
+                    if (!play_en) begin                 // 取消回放 -> 回空闲
+                        st <= S_CAP;
+                    end
+                    else if (dcnt == decim_use - 32'd1) begin
+                        dcnt <= 32'd0;
+                        play_g <= (($signed(dout[31:16])) <<< 2) + $signed(dout[31:16]);  // x5
+                        play_c <= ((($signed(dout[31:16])) <<< 2) + $signed(dout[31:16])) > 20'sd127
+                                  ? 20'sd127
+                                  : (((($signed(dout[31:16])) <<< 2) + $signed(dout[31:16])) < -20'sd128
+                                     ? -20'sd128
+                                     : (($signed(dout[31:16])) <<< 2) + $signed(dout[31:16]));
+                        da_play <= play_c[7:0] + 8'd128;   // 补码 -> 偏置二进制
+                        if (play_idx == 10'd1023) play_idx <= 10'd0;
+                        else                      play_idx <= play_idx + 10'd1;
+                    end
+                    else dcnt <= dcnt + 32'd1;
+                end
                 // [10-16] 50% 帧重叠的预载状态。
                 //   (注意) 必须作为**正式的 case 项**放在这里: 主 case 末尾有 `default: st<=S_CAP;`,
                 //   若只在 case 外面写 `else if (st==S_PRE)`, 会被那个 default 立刻打回 S_CAP
@@ -488,8 +519,12 @@ module self_fft_1024 #(
                         end
                         else begin
                             blk <= 0; base <= 0;
-                            if (stage==4'd9 && inv_mode) begin   // [10-16] 反向跑完 -> 直接出结果
-                                inv_mode <= 1'b0;  st <= S_DONE;
+                            if (stage==4'd9 && inv_mode) begin   // [10-16] 反向跑完
+                                inv_mode <= 1'b0;
+                                if (play_en) begin              // 有回放请求 -> 进回放态
+                                    play_idx <= 10'd0; dcnt <= 32'd0; st <= S_PLAY;
+                                end
+                                else st <= S_DONE;
                             end
                             else if (stage==4'd9) begin
                                 pk_addr<=0; pk_best<=0; pk_bin<=0; m2<=0; m3<=0; b2<=0; b3<=0;
