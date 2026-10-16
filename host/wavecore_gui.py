@@ -33,6 +33,10 @@ from protocol import (
     command_set_trigger,
     command_set_vpp_cal,
     command_set_waveform,
+    command_set_window,      # [0x90] 窗函数  [10-16]
+    command_set_overlap,     # [0x91] 帧重叠  [10-16]
+    command_ifft_filter,     # [0x92] IFFT 频域滤波  [10-16]
+    command_play_ifft,       # [0x93] IFFT 结果 DAC 回放  [10-16]
 )
 
 
@@ -236,6 +240,17 @@ class WaveCoreApp:
 
     # [v1.21 0x8F] 预触发比例：决定触发点在 1024 点波形帧里的位置
     #   0% 与升级前逐位等价；50% 时触发点落在帧正中央，可以看到触发沿左侧的波形
+    # [10-16 v1.22] 窗函数三档: 0=矩形 1=Hann 2=Blackman
+    #   副瓣: 矩形 -13dB / Hann -31dB / Blackman -58dB
+    #   泄漏只取决于"谱线离 bin 多远": 落在整数 bin 时矩形最优(主瓣最窄、频率精度最高);
+    #   落在 bin 正中时泄漏最严重, 此时 Blackman 收益最大。仿真实测(bin100 探针):
+    #   矩形 69 / Hann 32 / Blackman 24 (对数码)。
+    WINDOW_CHOICES = (
+        ("Hann（默认）", 1),
+        ("矩形（最窄主瓣）", 0),
+        ("Blackman（最强抑漏）", 2),
+    )
+
     PRETRIGGER_CHOICES = (
         ("0%（默认）", 0),
         ("25%", 1),
@@ -295,6 +310,16 @@ class WaveCoreApp:
             value="预触发 0%：帧首点 = 触发点（与升级前一致）"
         )
         self.current_pretrigger_index = 0
+
+        # ---- [10-16 v1.22] 新功能状态 ----
+        self.window_choice_var = tk.StringVar(value=self.WINDOW_CHOICES[0][0])
+        self.window_info_var = tk.StringVar(value="窗函数 Hann（默认）")
+        self.overlap_var = tk.BooleanVar(value=False)
+        self.overlap_info_var = tk.StringVar(value="整帧采集（默认）")
+        self.mask_lo_var = tk.StringVar(value="98")
+        self.mask_hi_var = tk.StringVar(value="102")
+        self.play_var = tk.BooleanVar(value=False)
+        self.ifft_info_var = tk.StringVar(value="频域滤波未设置")
         self.timebase_info_var = tk.StringVar()
         self.spectrum_info_var = tk.StringVar(value="尚未请求频谱")
         self.waveform_info_var = tk.StringVar(value="尚未请求波形")
@@ -567,6 +592,56 @@ class WaveCoreApp:
         )
         ttk.Label(controls, textvariable=self.pretrigger_info_var).grid(
             row=5, column=3, columnspan=6, padx=(12, 0), pady=(6, 0), sticky="w"
+        )
+
+        # ---- 行6: 窗函数 (v1.22, 0x90) ----
+        # 静默命令、无 ACK。判据: 看**远离主峰的底噪高度**随窗变化。
+        # 副瓣 矩形 -13dB / Hann -31dB / Blackman -58dB -> 底噪依次降低。
+        ttk.Label(controls, text="频谱窗：").grid(row=6, column=0, pady=(6, 0))
+        ttk.Combobox(
+            controls,
+            textvariable=self.window_choice_var,
+            values=tuple(label for label, _ in self.WINDOW_CHOICES),
+            state="readonly",
+            width=17,
+        ).grid(row=6, column=1, padx=4, pady=(6, 0))
+        ttk.Button(controls, text="应用窗函数", command=self.apply_window).grid(
+            row=6, column=2, padx=4, pady=(6, 0)
+        )
+        ttk.Label(controls, textvariable=self.window_info_var).grid(
+            row=6, column=3, columnspan=6, padx=(12, 0), pady=(6, 0), sticky="w"
+        )
+
+        # ---- 行7: 帧重叠 (v1.22, 0x91) ----
+        ttk.Label(controls, text="帧重叠：").grid(row=7, column=0, pady=(6, 0))
+        ttk.Checkbutton(
+            controls, text="50% 重叠（帧间无空白）", variable=self.overlap_var,
+            command=self.apply_overlap,
+        ).grid(row=7, column=1, columnspan=2, padx=4, pady=(6, 0), sticky="w")
+        ttk.Label(controls, textvariable=self.overlap_info_var).grid(
+            row=7, column=3, columnspan=6, padx=(12, 0), pady=(6, 0), sticky="w"
+        )
+
+        # ---- 行8: IFFT 频域滤波 (v1.22, 0x92) + DAC 回放 (0x93) ----
+        # 流程: 先按 0x8A 跑一次自研 FFT(产生频谱) -> 设掩膜 -> 运行滤波 -> 开 DAC 回放。
+        # 掩膜要给**带宽**, 别只给一根谱线: 加窗把单音展宽成 ±1 bin,
+        #   实测只掩 bin100 几乎无压制, 掩 98~102 才到 34 dB。
+        ttk.Label(controls, text="频域滤波：").grid(row=8, column=0, pady=(6, 0))
+        ttk.Spinbox(
+            controls, from_=0, to=511, width=5, textvariable=self.mask_lo_var
+        ).grid(row=8, column=1, padx=(4, 0), pady=(6, 0))
+        ttk.Label(controls, text="~").grid(row=8, column=1, pady=(6, 0), sticky="e")
+        ttk.Spinbox(
+            controls, from_=0, to=511, width=5, textvariable=self.mask_hi_var
+        ).grid(row=8, column=2, padx=(10, 0), pady=(6, 0))
+        ttk.Button(controls, text="运行滤波", command=self.apply_ifft).grid(
+            row=8, column=3, padx=4, pady=(6, 0)
+        )
+        ttk.Checkbutton(
+            controls, text="DAC 回放", variable=self.play_var, command=self.toggle_play
+        ).grid(row=8, column=4, columnspan=2, padx=4, pady=(6, 0), sticky="w")
+        ttk.Label(controls, textvariable=self.ifft_info_var).grid(
+            row=8, column=6, columnspan=3, padx=(12, 0), pady=(6, 0), sticky="w"
         )
 
         ttk.Label(
@@ -1078,6 +1153,70 @@ class WaveCoreApp:
             return choices[self.pretrigger_choice_var.get()]
         except KeyError as error:
             raise ValueError("请选择0%、25%、50%或75%预触发") from error
+
+    # ===================== [10-16 v1.22] 新增功能 =====================
+    def apply_window(self):
+        """发送 0x90 窗函数档位。
+
+        静默命令、无 ACK。判据: 看频谱上**远离主峰的底噪高度** ——
+        矩形最高 / Hann 次之 / Blackman 最低(副瓣 -13/-31/-58 dB)。
+        """
+        index = dict((label, val) for label, val in self.WINDOW_CHOICES)[
+            self.window_choice_var.get()
+        ]
+        if not self._send(command_set_window(index), "已发送窗函数命令"):
+            return
+        detail = {
+            0: "矩形：主瓣最窄、频率精度最高，但泄漏最大（-13 dB）",
+            1: "Hann：折中档（-31 dB），也是上电默认",
+            2: "Blackman：抑漏最强（-58 dB），主瓣最宽",
+        }[index]
+        self.window_info_var.set(detail + "（跑一次 FFT 看底噪变化）")
+
+    def apply_overlap(self):
+        """发送 0x91 帧重叠开关。
+
+        on 时每帧只采 512 个新点、前半复用上一帧后半 -> 帧间无空白，
+        且采集时间减半（DECIM=1000 时刷新率约翻倍）。
+        """
+        on = bool(self.overlap_var.get())
+        if not self._send(command_set_overlap(on), "已发送帧重叠命令"):
+            return
+        self.overlap_info_var.set(
+            "50% 重叠：帧间无信号空白、刷新率约翻倍" if on else "整帧采集（默认，与升级前一致）"
+        )
+
+    def apply_ifft(self):
+        """发送 0x92 频域滤波：掩掉 [lo, hi] 及其镜像 bin。
+
+        前置条件：已经跑过一次自研 FFT（0x8A）——反向变换是在**上一帧的频谱**上做的。
+        掩膜要给带宽，不要只给一根谱线（加窗会展宽 ±1 bin）。
+        """
+        try:
+            lo = int(self.mask_lo_var.get())
+            hi = int(self.mask_hi_var.get())
+            frame = command_ifft_filter(lo, hi)
+        except (ValueError, tk.TclError) as error:
+            messagebox.showerror("频域滤波参数错误", str(error))
+            return
+        if not self._send(frame, "已发送 IFFT 频域滤波命令"):
+            return
+        self.ifft_info_var.set(
+            "掩膜 bin %d~%d（含镜像）已下发｜勾选 DAC 回放可在示波器看波形" % (lo, hi)
+        )
+
+    def toggle_play(self):
+        """发送 0x93：把 IFFT 的时域结果循环送 DAC。
+
+        开启时 DDS 让出 DAC；关闭即恢复 DDS 驱动。
+        注意：往返衰减 1/N，输出幅度只有约 1/5 满量程（硬件内已做 5 倍增益与饱和）。
+        """
+        on = bool(self.play_var.get())
+        if not self._send(command_play_ifft(on), "已发送回放命令"):
+            return
+        self.ifft_info_var.set(
+            "DAC 回放中：示波器接 DA 输出可见滤波后波形" if on else "已停止回放，DDS 重新驱动 DAC"
+        )
 
     def apply_pretrigger(self):
         """发送 0x8F 预触发比例（v1.21）。
