@@ -434,7 +434,9 @@ module self_fft_1024 #(
                 S_W1:  begin
                              if (!w1_go) w1_go<=1'b1;          // 多等一拍: 兼容 2 拍读延迟
                              else begin
-                                 if (inv_mode && stage==4'd0 && (in_mask(i1) || in_mask(i2))) begin
+                                 // [10-16 修正] 掩膜只看 i1 —— 这一拍 i2 还没算出来,
+                                 //   原来写成 in_mask(i1)||in_mask(i2) 会用上一块的陈旧 i2, 谓词失真。
+                                 if (inv_mode && stage==4'd0 && in_mask(i1)) begin
                                      ar<=16'sd0; ai<=16'sd0;
                                  end else begin
                                      ar<=dout[31:16]; ai<=dout[15:0];
@@ -446,7 +448,13 @@ module self_fft_1024 #(
                 S_W2:  begin
                              if (!w2_go) w2_go<=1'b1;          // 多等一拍
                              else begin
-                                 br<=dout[31:16]; bi<=dout[15:0];
+                                 // [10-16 修正] 掩膜也必须加在 b 支路(br/bi)上 ——
+                                 //   原来只加了 ar/ai, 等于只掩了每对里的前一半, 掩膜形同虚设。
+                                 if (inv_mode && stage==4'd0 && in_mask(i2)) begin
+                                     br<=16'sd0; bi<=16'sd0;
+                                 end else begin
+                                     br<=dout[31:16]; bi<=dout[15:0];
+                                 end
                                  tw_addr<=j<<stage[3:0]; st<=S_MUL;
                              end
                          end

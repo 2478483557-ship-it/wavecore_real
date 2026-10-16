@@ -523,7 +523,9 @@ module tb_self_fft;
             $display("  正向谱: SF=%0d(bin%0d) S2=%0d(bin%0d)",
                      res_freq, to_bin(res_freq), res_f2, to_bin(res_f2));
 
-            mask_lo = 10'd100; mask_hi = 10'd100;      // 掩 bin100 及其镜像
+            // [10-16] 掩 98..102 而不是只掩 100: Hann 窗把单音展宽成 ±1 bin,
+            //   只掩中心那颗会漏掉 99/101 两颗旁瓣 bin。
+            mask_lo = 10'd98;  mask_hi = 10'd102;      // 掩 bin100 一带及其镜像
             @(negedge clk); inv_run = 1'b1; @(negedge clk); inv_run = 1'b0;
             fork : iw
                 begin : ito
