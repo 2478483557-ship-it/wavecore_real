@@ -85,6 +85,17 @@ module tb_self_fft;
     reg [1:0] win_cfg = 2'd1;            // [10-16] 0=矩形 1=Hann 2=Blackman (默认 Hann, 保持既有回归不变)
     reg       ovl_en  = 1'b0;            // [0x91] 50% 帧重叠 (默认关, 保证既有回归不变)
     reg [31:0] dec_cfg = 32'd0;          // [0x8D] 0=用参数 DECIM
+    reg        inv_run  = 1'b0;          // [0x92] IFFT 反向通行脉冲
+    reg [9:0]  mask_lo  = 10'd0;         // [0x92] 掩膜低 bin
+    reg [9:0]  mask_hi  = 10'd0;         // [0x92] 掩膜高 bin
+    function [9:0] rev10f;
+        input [9:0] x;
+        integer b;
+        begin
+            rev10f = 10'd0;
+            for (b = 0; b < 10; b = b + 1) rev10f[b] = x[9-b];
+        end
+    endfunction
 
     //======== [10-16] 采集样点镜像(用于验证帧重叠) ========
     // 只镜像**写入 RAM 的样点**(采集态 S_CAP=0 与预载态 S_PRE=18), 不含蝶形写。
@@ -108,6 +119,9 @@ module tb_self_fft;
         .decim_cfg(dec_cfg), .fs_cfg(32'd0),   // [0x8D] 0 = 用参数(DECIM=1) / 50000
         .win_cfg(win_cfg),                   // [0x90] 窗函数运行时可切换
         .ovl_en(ovl_en),                     // [0x91] 50% 帧重叠
+        .inv_run(inv_run),                   // [0x92] IFFT 频域滤波
+        .mask_lo(mask_lo),
+        .mask_hi(mask_hi),
         .res_freq(res_freq), .res_f2(res_f2), .res_f3(res_f3),
         .res_done(res_done), .dbg_st(dbg_st), .dbg2(dbg2)
     );
@@ -498,6 +512,34 @@ module tb_self_fft;
             chk("重叠后谱峰仍在 bin20", to_bin(res_freq) == 20);
         end
         ovl_en = 1'b0;
+
+        $display("-------- [10-16 新增] IFFT 频域滤波: 掩掉 bin100, 时域应只剩 bin20 --------");
+        begin : ifft_t
+            integer k;
+            ovl_en = 1'b0;
+            sel    = 3'd3;                     // dual20_100 双音表
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            @(posedge res_done); repeat (40) @(posedge clk);
+            $display("  正向谱: SF=%0d(bin%0d) S2=%0d(bin%0d)",
+                     res_freq, to_bin(res_freq), res_f2, to_bin(res_f2));
+
+            mask_lo = 10'd100; mask_hi = 10'd100;      // 掩 bin100 及其镜像
+            @(negedge clk); inv_run = 1'b1; @(negedge clk); inv_run = 1'b0;
+            fork : iw
+                begin : ito
+                    #6000000;
+                    $display("  [TIMEOUT] IFFT 未完成 st=%0d inv_mode=%0d", u_dut.st, u_dut.inv_mode);
+                    disable iw;
+                end
+                begin
+                    @(posedge res_done); repeat (40) @(posedge clk);
+                    disable iw;
+                end
+            join
+            $display("  IFFT 完成, 导出时域(fmir 镜像, 自然序):");
+            for (k = 0; k < 1024; k = k + 1)
+                $display("IFFT %0d %0d", k, $signed(fmir[rev10f(k[9:0])][31:16]));
+        end
 
         $display("=====================================================");
         $display("RESULT: PASS=%0d  FAIL=%0d", n_pass, n_fail);
