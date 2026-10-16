@@ -162,6 +162,11 @@ module self_fft_1024 #(
     //   镜像必须一起掩: 实信号的谱共轭对称, 只掩一半会留下复数残留。
     // 增益: 每级 >>1 -> 往返衰减 1/N(见 model_ifft.py)。本版先保证算法正确。
     reg  inv_mode;
+    reg  inv_pend;   // inv_run 只有 1 拍; 若 FSM 当时不在 S_CAP 就丢了 -> 先锁存
+    always @(posedge clk or negedge rst_n)
+        if (!rst_n)        inv_pend <= 1'b0;
+        else if (inv_run)  inv_pend <= 1'b1;
+        else if (inv_mode) inv_pend <= 1'b0;
     function in_mask;
         input [9:0] b;
         begin
@@ -332,7 +337,7 @@ module self_fft_1024 #(
             addr<=0; din<=0; we<=0; tw_addr<=0; w_addr<=0;
             stage<=0; base<=0; j<=0; half<=10'd512; nblk<=10'd1; blk<=0; i1<=0; i2<=0;
             first_run<=1'b1; pre_idx<=10'd0;      // [10-16] 50% 重叠: 复位后首帧采满
-            inv_mode<=1'b0;                       // [10-16] IFFT: 必须复位! 否则正向通路的
+            inv_mode<=1'b0; inv_pend<=1'b0;      // [10-16] IFFT: 必须复位! 否则正向通路的
                                                   //   `inv_mode ? rev10(..) : ..` 地址选择会是 X
             ar<=0;ai<=0;br<=0;bi<=0;cr<=0;ci<=0;
             p_rr<=0;p_ii<=0;p_ri<=0;p_ir<=0;
@@ -364,7 +369,7 @@ module self_fft_1024 #(
                     cnt_cy <= 24'd0;
                 end
             end
-            else if (inv_run && !inv_mode && st==S_CAP) begin
+            else if (inv_pend && !inv_mode && st==S_CAP) begin
                 inv_mode <= 1'b1;  cap_on <= 1'b0;  st <= S_START;
             end
             else if (cap_on && st==S_CAP) begin

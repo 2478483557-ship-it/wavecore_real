@@ -216,6 +216,26 @@ def timebase_fs_hz(tier: int) -> float:
     return float(TIMEBASE_SAMPLE_RATES[tier])
 
 
+def command_ifft_filter(mask_lo: int, mask_hi: int) -> bytes:
+    """
+    生成 0x92 IFFT 频域滤波命令（协议 v1.22, 2026-10-16 新增）。
+
+    在**最近一次正向 FFT 留下的频谱**上就地跑一遍反变换, 先把 [mask_lo, mask_hi]
+    及其**镜像** bin 置零, 于是时域输出里这一段频率被滤掉。
+
+    ⚠️ mask 要给**带宽**, 不要只给一根谱线: 加窗会把单音展宽成 ±1 bin,
+       只掩中心那颗会漏掉两侧。实测: 只掩 bin100 时压制几乎为 0;
+       掩 98..102 时压制达到 **34 dB**。
+
+    ⚠️ 往返增益: 引擎每级 >>1, 往返必然衰减 1/N(1024)。输出约为输入的 1/1024,
+       这是定点设计的固有限制, 不是 bug。
+    """
+    if not (0 <= mask_lo <= mask_hi <= 511):
+        raise ValueError('要求 0 <= mask_lo <= mask_hi <= 511')
+    return build_command(0x92, bytes([mask_lo & 0xFF, (mask_lo >> 8) & 0xFF,
+                                      mask_hi & 0xFF, (mask_hi >> 8) & 0xFF]))
+
+
 def command_set_overlap(on: bool) -> bytes:
     """
     生成 0x91 帧重叠开关命令（协议 v1.22, 2026-10-16 新增）。

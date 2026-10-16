@@ -52,7 +52,10 @@ module cmd_decoder (
     output reg  [1:0]  win_sel     // [0x90] 窗函数: 0=矩形 1=Hann 2=Blackman  [10-16 新增]
 ),
     output reg         ovl_set,    // [0x91] 帧重叠档位生效(1拍脉冲)  [10-16]
-    output reg         ovl_sel     // [0x91] 50%帧重叠: 0=关(默认) 1=开  [10-16]
+    output reg         ovl_sel,    // [0x91] 50%帧重叠: 0=关(默认) 1=开  [10-16]
+    output reg         ifft_set,   // [0x92] IFFT 触发(1拍脉冲)  [10-16]
+    output reg  [9:0]  ifft_lo,    // [0x92] 掩膜低 bin(含)
+    output reg  [9:0]  ifft_hi     // [0x92] 掩膜高 bin(含)
 
     // 换算常量: round(2^32/5e7 x 2^24)
     localparam [31:0] M = 32'd1_441_150_920;
@@ -107,7 +110,10 @@ module cmd_decoder (
             win_set     <= 1'b0;
             win_sel     <= 2'd1;
             ovl_set     <= 1'b0;
-            ovl_sel     <= 1'b0;      // [10-16] 上电默认关, 既有行为不变      // [10-16] 上电默认 Hann, 与 09-30 起的既有行为一致
+            ovl_sel     <= 1'b0;      // [10-16] 上电默认关
+            ifft_set    <= 1'b0;
+            ifft_lo     <= 10'd0;
+            ifft_hi     <= 10'd0;
             spec_req    <= 1'b0;
             tb_set      <= 1'b0;
             pre_set     <= 1'b0;
@@ -215,6 +221,12 @@ module cmd_decoder (
                                 8'h91: begin             // [10-16] 50% 帧重叠: 0=关 1=开
                                     ovl_set <= 1'b1;
                                     ovl_sel <= pbuf[0][0];
+                                end
+                                8'h92: begin             // [10-16] IFFT 频域滤波(4 字节负载)
+                                    // pbuf[0..1]=mask_lo 小端 / pbuf[2..3]=mask_hi 小端(各取低 10 位)
+                                    ifft_set <= 1'b1;
+                                    ifft_lo  <= {pbuf[1][1:0], pbuf[0]};
+                                    ifft_hi  <= {pbuf[3][1:0], pbuf[2]};
                                 end
                                 default: ;               // 其余命令暂不支持
                             endcase

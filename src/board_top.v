@@ -135,6 +135,9 @@ wire        win_set_w;   // [0x90] 窗函数档位生效脉冲(未使用, 留作
 wire [1:0]  win_cfg_w;   // [0x90] 窗函数 0=矩形 1=Hann 2=Blackman -> self_fft_1024
 wire        ovl_set_w;   // [0x91] 帧重叠档位生效脉冲(留作回执)  [10-16]
 wire        ovl_en_w;    // [0x91] 50% 帧重叠使能 -> self_fft_1024  [10-16]
+wire        ifft_set_w;  // [0x92] IFFT 触发脉冲  [10-16]
+wire [9:0]  ifft_lo_w;   // [0x92] 掩膜低 bin
+wire [9:0]  ifft_hi_w;   // [0x92] 掩膜高 bin
 
     // ---- 0.7c [0x8E] 幅度谱帧相关线(同样必须先声明后使用; 下方 3.7/3.9 会用到) ----
     wire        spec_req_w;    // 0x8E 请求脉冲(cmd_decoder 输出)
@@ -171,6 +174,9 @@ wire        ovl_en_w;    // [0x91] 50% 帧重叠使能 -> self_fft_1024  [10-16]
         .win_sel     (win_cfg_w   ),
         .ovl_set     (ovl_set_w   ),   // [0x91] 50% 帧重叠
         .ovl_sel     (ovl_en_w    ),
+        .ifft_set    (ifft_set_w  ),   // [0x92] IFFT 频域滤波
+        .ifft_lo     (ifft_lo_w   ),
+        .ifft_hi     (ifft_hi_w   ),
         .sf_run      (sf_run_w    ),
         .sweep_en    (sweep_en_w  ),
         .cal_kn      (cal_kn_w    ),
@@ -390,7 +396,10 @@ wire        ovl_en_w;    // [0x91] 50% 帧重叠使能 -> self_fft_1024  [10-16]
         .decim_cfg(tb_decim_w),
         .fs_cfg   (tb_fs_w   ),
         .win_cfg  (win_cfg_w ),
-        .ovl_en   (ovl_en_w  ),   // [0x91] 50% 帧重叠   // [0x90] 窗函数运行时可切换
+        .ovl_en   (ovl_en_w  ),   // [0x91] 50% 帧重叠
+        .inv_run  (ifft_set_w),   // [0x92] IFFT 频域滤波
+        .mask_lo  (ifft_lo_w ),
+        .mask_hi  (ifft_hi_w ),   // [0x90] 窗函数运行时可切换
         .run      (sf_run_w | spec_run_w),   // 0x8A 或 0x8E 都触发一次运行
         .res_freq (sf_freq_w ),
         .res_f2   (sf_f2_w   ),
