@@ -402,6 +402,9 @@ module self_fft_1024 #(
                             blk <= 0; base <= 0;
                             if (stage==4'd9) begin
                                 pk_addr<=0; pk_best<=0; pk_bin<=0; m2<=0; m3<=0; b2<=0; b3<=0;
+                                // [10-16 排查记录] 曾怀疑“扫描期间 we 未清 -> 读的同时在写、自我破坏”,
+                                //   经查 we 是在 else 分支首行**默认清零**的(标准“默认赋值+分支覆盖”),
+                                //   只有 S_WR1/S_WR2 显式置 1 —— 该怀疑不成立, 已排除, 勿重试。
                                 scan<=2'd0;
                                 st<=S_PEAK;
                             end
