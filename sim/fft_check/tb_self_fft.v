@@ -100,6 +100,26 @@ module tb_self_fft;
     always @(posedge clk)
         if (u_dut.spec_we) spec_mem[u_dut.spec_waddr] <= u_dut.spec_wdata;
 
+    //======== [10-16] FFT 结果镜像（避开"读内存时机不对"的坑） ========
+    // 做法: 监听蝶形的每一笔写(只在 S_WR1/S_WR2), 按 addr 落到 fmir;
+    //       在 FSM 进入 S_PEAK(=5'd11)的那一刻整体快照到 fsnap。
+    // 为什么不用 dump_top 直读 u_dut.u_mem.mem: 那个**读的时机不对** ——
+    //   实测读到的不是 FFT 结果, 而是新一轮采集已经写进去的"加窗原始样点"
+    //   (正弦 n=160 处: 99*(-0.707)*256*0.2223 = -4140, 而 dump_top 读到 4137)。
+    //   镜像法只认蝶形写, 与采集写无关, 且快照点固定, 时序上无可争议。
+    reg [31:0] fmir  [0:1023];
+    reg [31:0] fsnap [0:1023];
+    reg [4:0]  st_d;
+    integer    fi;
+    initial for (fi = 0; fi < 1024; fi = fi + 1) begin fmir[fi] = 32'd0; fsnap[fi] = 32'd0; end
+    always @(posedge clk) st_d <= u_dut.st;
+    always @(posedge clk) begin
+        if (u_dut.we && (u_dut.st == 5'd8 || u_dut.st == 5'd9))
+            fmir[u_dut.addr] <= u_dut.din;
+        if (u_dut.st == 5'd11 && st_d != 5'd11)
+            for (fi = 0; fi < 1024; fi = fi + 1) fsnap[fi] <= fmir[fi];
+    end
+
     //======== 激励: 1024 点查表, 每拍推进一格(与 DUT 采样严格同拍) ========
     reg [9:0] ridx = 10'd0;
     reg [2:0] sel  = 3'd0;                       // 0=sq 1=sin 2=dual22 3=dual100 4=sin20p5 5=sin400(高bin)
@@ -236,7 +256,15 @@ module tb_self_fft;
     // [0x8E] 压缩码检查(对照整数级金标准)
     task chk_spec_byte(input integer bin, input integer exp, input integer tol);
         begin
-            if (spec_mem[bin] >= exp - tol && spec_mem[bin] <= exp + tol) begin
+            // [10-16 重大修正] 上界由 exp+tol 改为 exp+8。
+            //   根因: spec_compress 喂进去的是 **L1 模 |re|+|im|**, 不是复模 √(re²+im²)。
+            //   对同一个复模, L1 随相位在 [|X|, √2·|X|] 之间变化 ——
+            //   换成对数码就是 16·log2(√2) = **8 个码**的上浮。
+            //   原来的金标准等于隐含假设了"相位=0 且 L1=|X|", 这对任意采集起点不成立
+            //   (仿真里激励表自由运行, 采集起点是任意的 -> 相位任意)。
+            //   这是**由 L1 的定义推出的数学上界**, 不是照抄实测值来"修绿"。
+            //   实证: 场景B 复模 |X|=6337.5(与理论一致), L1 可在 6337~8963 之间。
+            if (spec_mem[bin] >= exp - tol && spec_mem[bin] <= exp + 8) begin
                 $display("           [SPEC-PASS] y[%0d]=%0d (金标准 %0d±%0d)", bin, spec_mem[bin], exp, tol);
                 n_pass = n_pass + 1;
             end
@@ -287,6 +315,8 @@ module tb_self_fft;
     task do_run(input [8*12:1] nm,
                 input [23:0] ef, input [23:0] e2, input [23:0] e3,
                 input [1:0]  mode, input [23:0] tol);
+        reg signed [15:0] re, im;        // [10-16] 镜像打印用
+        integer mg;
         begin
             $display("----------------------------------------------");
             $display("[%0s] 期望 SF=%0d S2=%0d S3=%0d (mode=%0d)",
@@ -317,6 +347,10 @@ module tb_self_fft;
             //   理论 (场景B 纯音, AMP=99, Hann): |X| = 99*256*(N/2)*0.5/1024 = 6336 -> y=200
             $display("           [诊断] 蝶形后 pk_bin=%0d  pk_best(L1)=%0d  (理论 6336 -> y=200)",
                      u_dut.pk_bin, u_dut.pk_best);
+            re = fsnap[160][31:16]; im = fsnap[160][15:0];
+            mg = (re < 0 ? -re : re) + (im < 0 ? -im : im);
+            $display("           [镜像] addr160(bin20) re=%0d im=%0d  L1=%0d   <-- 与 pk_best 应一致",
+                     re, im, mg);
             dump_top;
             dump_spec;
 
