@@ -21,6 +21,7 @@ module self_fft_1024 #(
     input  wire        run,          // 0x8A: 运行一次(脉冲); 平时静默
     input  wire [31:0] decim_cfg,    // [0x8D] 时基抽取比(0 = 用参数 DECIM)
     input  wire [31:0] fs_cfg,       // [0x8D] 等效采样率 Hz(0 = 用 50000)
+    input  wire [1:0]  win_cfg,      // [0x90] 窗函数: 0=矩形 1=Hann 2=Blackman  (10-16 新增)
     output reg  [23:0] res_freq,     // 峰值频率(Hz) = bin*50000/1024
     output reg  [23:0] res_f2,       // [调试] 第二峰
     output reg  [23:0] res_f3,       // [调试] 第三峰
@@ -81,14 +82,25 @@ module self_fft_1024 #(
     // 一键回退: 把 USE_HANN 改成 1'b0 重新综合 -> 整数块被 generate 掉,
     //   行为与 2026-09-30 之前**逐位相同**(已上板验证过的那版)。
     reg  [9:0]  w_addr;
-    wire [15:0] win_w;
+    wire [15:0] win_hann, win_black;
     generate
-        if (USE_HANN) begin : g_hann
-            hann_rom u_hann_self (.clk(clk), .addr(w_addr), .wout(win_w));
+        if (USE_HANN) begin : g_win
+            hann_rom     u_hann_self  (.clk(clk), .addr(w_addr), .wout(win_hann));
+            blackman_rom u_black_self (.clk(clk), .addr(w_addr), .wout(win_black));
         end else begin : g_no_win
-            assign win_w = 16'd0;
+            assign win_hann  = 16'd0;
+            assign win_black = 16'd0;
         end
     endgenerate
+
+    //======== [10-16] 窗函数运行时可切换 (命令 0x90) ========
+    // 0=矩形(Q15 满幅 32768) / 1=Hann(默认) / 2=Blackman
+    // 关键: 矩形用 Q15=32768 表示, 于是 (s*32768)>>7 == s<<8,
+    //       与旧版 USE_HANN=0 的无窗路径**逐位相同** —— 这条是回归判据(tb 里有断言)。
+    // 副瓣衰减: 矩形 -13dB / Hann -31dB / Blackman -58dB
+    // 主瓣宽度: 矩形 1x / Hann 2x / Blackman 3x  (分辨率与泄漏的取舍)
+    wire [15:0] win_w = (win_cfg == 2'd0) ? 16'd32768 :
+                        (win_cfg == 2'd2) ? win_black : win_hann;
 
     wire signed [7:0]  win_s    = ad_cap ^ 8'h80;                    // 中点归零补码(同 09-28 映射修复)
     wire signed [23:0] win_p    = win_s * $signed({1'b0, win_w});    // 8b x 16b, 24 位有符号

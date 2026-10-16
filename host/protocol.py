@@ -216,6 +216,27 @@ def timebase_fs_hz(tier: int) -> float:
     return float(TIMEBASE_SAMPLE_RATES[tier])
 
 
+def command_set_window(win: int) -> bytes:
+    """
+    生成 0x90 窗函数档位命令（协议 v1.22, 2026-10-16 新增）。
+
+    win: 0=矩形(主瓣最窄, 频率精度最高, 副瓣 -13dB)
+         1=Hann(默认, 副瓣 -31dB)
+         2=Blackman(副瓣 -58dB, 泄漏最小, 主瓣最宽)
+
+    物理依据: 泄漏只取决于谱线与 bin 的**距离**。落在整数 bin 时矩形窗最优;
+    落在 bin 正中(半个 bin 偏移)时泄漏最严重, 此时用 Blackman 收益最大。
+    仿真实测(bin 半偏移, 探针 bin100): 矩形 69 / Hann 32 / Blackman 24 (对数码)。
+    """
+    if win not in WINDOW_TIERS:
+        raise ValueError("win 必须是 %s" % sorted(WINDOW_TIERS))
+    return build_command(0x90, bytes([win]))
+
+
+# [0x90] 窗函数档位 -> 名称 (单一事实源)
+WINDOW_TIERS = {0: "矩形", 1: "Hann", 2: "Blackman"}
+
+
 def command_request_spectrum() -> bytes:
     """
     生成 0x8E 幅度谱帧请求命令（空负载）。

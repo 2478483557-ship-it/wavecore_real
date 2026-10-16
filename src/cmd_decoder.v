@@ -47,7 +47,9 @@ module cmd_decoder (
     output reg         tb_set,     // [0x8D] 时基档位生效(1拍脉冲)
     output reg  [1:0]  tb_sel,     // [0x8D] 目标档位 0=T1(50k) 1=T2(12.5k) 2=T3(100k) 3=T4(200k)
     output reg         pre_set,    // [0x8F] 预触发档位生效(1拍脉冲)
-    output reg  [1:0]  pre_sel     // [0x8F] 预触发档: 0=0% 1=25% 2=50% 3=75%
+    output reg  [1:0]  pre_sel,    // [0x8F] 预触发档: 0=0% 1=25% 2=50% 3=75%
+    output reg         win_set,    // [0x90] 窗函数档位生效(1拍脉冲)  [10-16 新增]
+    output reg  [1:0]  win_sel     // [0x90] 窗函数: 0=矩形 1=Hann 2=Blackman  [10-16 新增]
 );
 
     // 换算常量: round(2^32/5e7 x 2^24)
@@ -100,6 +102,8 @@ module cmd_decoder (
             sweep_en    <= 1'b0;
             wave_req    <= 1'b0;
             cal_load    <= 1'b0;
+            win_set     <= 1'b0;
+            win_sel     <= 2'd1;      // [10-16] 上电默认 Hann, 与 09-30 起的既有行为一致
             spec_req    <= 1'b0;
             tb_set      <= 1'b0;
             pre_set     <= 1'b0;
@@ -199,6 +203,10 @@ module cmd_decoder (
                                 8'h8F: begin             // [0x8F] 预触发档: 0=0%/1=25%/2=50%/3=75%
                                     pre_set <= 1'b1;
                                     pre_sel <= pbuf[0][1:0];
+                                end
+                                8'h90: begin             // [10-16] 窗函数: 0=矩形 1=Hann 2=Blackman
+                                    win_set <= 1'b1;
+                                    win_sel <= pbuf[0][1:0];
                                 end
                                 default: ;               // 其余命令暂不支持
                             endcase

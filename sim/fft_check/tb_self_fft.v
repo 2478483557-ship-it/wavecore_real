@@ -82,9 +82,12 @@ module tb_self_fft;
 
     always #10 clk = ~clk;                       // 20ns 周期 = 50MHz
 
+    reg [1:0] win_cfg = 2'd1;            // [10-16] 0=矩形 1=Hann 2=Blackman (默认 Hann, 保持既有回归不变)
+
     self_fft_1024 #(.DECIM(32'd1), .USE_HANN(1'b1), .USE_INTERP(1'b1)) u_dut (  // 两个参数都改 1'b0 = 负向对照
         .clk(clk), .rst_n(rst_n), .ad_cap(ad_cap), .run(run),
         .decim_cfg(32'd0), .fs_cfg(32'd0),   // [0x8D] 0 = 用参数(DECIM=1) / 50000
+        .win_cfg(win_cfg),                   // [0x90] 窗函数运行时可切换
         .res_freq(res_freq), .res_f2(res_f2), .res_f3(res_f3),
         .res_done(res_done), .dbg_st(dbg_st), .dbg2(dbg2)
     );
@@ -177,12 +180,18 @@ module tb_self_fft;
     endtask
 
     // [0x8E] 找谱峰值 bin 并打印关键 bin
+    // [10-16 修复] 原来写 spec_pk=-1; sv=-1; 然后 spec_mem[k] > sv。
+    //   spec_mem 是 reg [7:0](无符号), sv 是 integer(有符号); Verilog 规则下
+    //   只要有一个操作数无符号, 整个比较就按无符号做 -> 初值 -1 变成 0xFFFFFFFF,
+    //   任何 0~255 的值都不大于它, 于是 **峰值永远找不到**, 每个场景都报 bin=-1。
+    //   修法: 用 0 作初值(码值本来就非负), 全 0 时再还原成 -1 表示"无数据"。
     task dump_spec;
         integer k, sv;
         begin
-            spec_pk = -1; sv = -1;
+            spec_pk = -1; sv = 0;
             for (k = 0; k < 512; k = k + 1)
                 if (spec_mem[k] > sv) begin sv = spec_mem[k]; spec_pk = k; end
+            if (sv == 0) spec_pk = -1;
             $display("           [0x8E] spec_peak bin=%0d val=%0d | y20=%0d y60=%0d y100=%0d",
                      spec_pk, sv, spec_mem[20], spec_mem[60], spec_mem[100]);
         end
@@ -215,6 +224,39 @@ module tb_self_fft;
                 $display("           [SPEC-FAIL] y[%0d]=%0d, 金标准 %0d±%0d", bin, spec_mem[bin], exp, tol);
                 n_fail = n_fail + 1;
             end
+        end
+    endtask
+
+    //======== [10-16 新增] 通用断言 ========
+    task chk(input [8*44:1] nm, input cond);
+        begin
+            if (cond) begin n_pass = n_pass + 1; $display("  PASS  %0s", nm); end
+            else      begin n_fail = n_fail + 1; $display("  FAIL  %0s", nm); end
+        end
+    endtask
+
+    //======== [10-16 新增] 窗函数泄漏探针 ========
+    // 激励用 sin20p5(20.5 个周期 -> 半 bin 偏移, 泄漏最严重的相位),
+    // 主峰在 bin20, 取 **bin100** 作泄漏探针(远离主瓣, 只反映副瓣)。
+    // 副瓣理论值: 矩形 -13dB / Hann -31dB / Blackman -58dB -> 泄漏应单调下降。
+    integer lk_rect, lk_hann, lk_blk, pk_rect, pk_hann, pk_blk, fr_rect, fr_hann, fr_blk;
+    task win_probe(input [1:0] wc, output integer leak, output integer pkmag,
+                   output integer freq);
+        integer i;
+        begin
+            win_cfg = wc;
+            sel     = 3'd4;
+            for (i = 0; i < 512; i = i + 1) spec_mem[i] = 8'h00;
+            repeat (4) @(posedge clk);
+            @(negedge clk); run = 1'b1;
+            @(negedge clk); run = 1'b0;
+            @(posedge res_done);
+            repeat (700) @(posedge clk);        // 等幅度谱扫描(512 拍)收完
+            leak  = spec_mem[100];
+            pkmag = spec_mem[20];
+            freq  = res_freq;
+            $display("  [win=%0d] bin20(主峰)=%0d  bin100(泄漏)=%0d  SF=%0dHz",
+                     wc, spec_mem[20], spec_mem[100], res_freq);
         end
     endtask
 
@@ -318,6 +360,20 @@ module tb_self_fft;
         //   修复(乘数改 32 位)后本场景才可能通过。
         sel = 3'd5; do_run("F_s400  高bin溢出",  24'd19531, 24'd0,   24'd0,    2'd1, 24'd0 );
         chk_spec_range(400, 400, -1, -1); chk_spec_byte(400, 200, 2);
+
+        $display("-------- [10-16 新增] 窗函数运行时可切换: 泄漏对比 --------");
+        $display("激励 sin20p5(半 bin 偏移), 探针 bin100; 副瓣理论 矩形 -13dB / Hann -31dB / Blackman -58dB");
+        win_probe(2'd0, lk_rect, pk_rect, fr_rect);
+        win_probe(2'd1, lk_hann, pk_hann, fr_hann);
+        win_probe(2'd2, lk_blk,  pk_blk,  fr_blk);
+        chk("窗切换生效: 矩形泄漏 > Blackman 泄漏", lk_rect > lk_blk);
+        chk("泄漏单调: 矩形 >= Hann",              lk_rect >= lk_hann);
+        chk("泄漏单调: Hann >= Blackman",          lk_hann >= lk_blk);
+        chk("三档主峰区都明显强于泄漏探针",        (pk_rect > lk_rect) && (pk_hann > lk_hann) && (pk_blk > lk_blk));
+        chk("三档峰值频率落在 1000Hz 附近(±10)",    (fr_rect > 990) && (fr_rect < 1010) &&
+                                                    (fr_hann > 990) && (fr_hann < 1010) &&
+                                                    (fr_blk  > 990) && (fr_blk  < 1010));
+        win_cfg = 2'd1;                          // 恢复默认 Hann
 
         $display("=====================================================");
         $display("RESULT: PASS=%0d  FAIL=%0d", n_pass, n_fail);
