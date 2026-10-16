@@ -25,32 +25,23 @@ rng = np.random.default_rng(20261016)
 
 
 def feats(x):
-    """把波形压成 6 个**硬件友好**的特征(只用累加器 + 一个共用顺序除法器)。
-
-    [10-16 重新设计] 前版用"峭度/波峰因数", 数学上更漂亮, 但 RTL 要开方 + 四次方, 太贵。
-    这一版全部由 6 个累加器 + 1 个峰值派生, 除法每帧只做 4 次(共用一个顺序除法器):
-        acc_hi  count(x>0)     acc_abs  sum|x|      acc_sq  sum(x^2)
-        acc_x4  sum(x^4)       acc_sl   sum|x[n]-x[n-1]|   zc 过零次数
-    归一化全部除以 1024(移位) 或 peak(除法) —— 与幅度无关, 这是要害。
-    """
-    N_ = len(x)
+    """x: 已归一化到 [-1,1] 的 1024 点波形。返回 6 个 [0,1] 特征。"""
     pk = float(np.max(np.abs(x))) + 1e-9
     xn = x / pk
-    hi = xn > 0
-    acc_hi = float(np.count_nonzero(hi))
-    acc_abs = float(np.sum(np.abs(xn)))
-    acc_sq = float(np.sum(xn ** 2))
-    acc_x4 = float(np.sum(xn ** 4))
-    acc_sl = float(np.sum(np.abs(np.diff(xn))))
-    zc = float(np.count_nonzero(np.diff(hi)))
-    ms = acc_sq / N_                                   # 归一化均方
-    f0 = acc_hi / N_                                   # 占空比        移位
-    f1 = acc_abs / (N_ * 1.0)                          # 平均绝对值    移位(已按 peak 归一)
-    f2 = min((acc_x4 / N_) / max(ms * ms, 1e-9) / 3.0, 1.0)   # 峭度/3   1 次除法
-    f3 = min(ms, 1.0)                                  # 归一化均方    -
-    f4 = min(acc_sl / (N_ * 1.0) * 2.0, 1.0)           # 归一化斜率   移位
-    f5 = zc / N_                                       # 过零率        移位
-    return np.array([f0, f1, f2, f3, f4, f5])
+    hi = xn > 0.0
+    duty = float(np.mean(hi))
+    mean_n = abs(float(np.mean(xn)))
+    rms = float(np.sqrt(np.mean(xn ** 2)))
+    mean_abs = float(np.mean(np.abs(xn))) + 1e-9
+    # [10-16] 原用 "波形因数"(rms/mean_abs): 正弦 1.11 vs 三角 1.15 —— 几乎无区分度, 弃用。
+    #   改用**峭度**(四阶矩/二阶矩^2): 正弦 1.5 / 方波 1.0 / 三角 1.8 -> 区分度大得多。
+    m4 = float(np.mean((xn - xn.mean()) ** 4))
+    kurt = m4 / (rms ** 4 + 1e-9)
+    form = min(kurt / 3.0, 1.0)
+    crest = min(rms / pk, 1.0)                      # 1/峰值因数
+    slope = min(float(np.mean(np.abs(np.diff(xn)))) * 2.0, 1.0)
+    zc = float(np.mean(np.diff(xn > 0) != 0))
+    return np.array([duty, mean_n, form, crest, slope, zc])
 
 
 def gen(cls):
