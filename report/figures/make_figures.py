@@ -111,10 +111,10 @@ for r,v in zip(b,vals):
     ax.text(r.get_x()+r.get_width()/2,v+420,format(v,',')+'  (%.2f%%)'%(v/20800*100),
             ha='center',fontsize=10.5,color='#2C2C2A')
 ax.set_ylabel('Slice LUTs',fontsize=10.5); ax.set_ylim(0,23500)
-ax.annotate('',xy=(1,5117),xytext=(0,20829),
+ax.annotate('',xy=(0.86,6200),xytext=(0.14,20600),
             arrowprops=dict(arrowstyle='-|>',color='#0F6E56',lw=1.6,ls='--',
-                            connectionstyle='arc3,rad=-0.28'))
-ax.text(0.5,14300,'−75.4%',fontsize=13,color='#0F6E56',ha='center',
+                            connectionstyle='arc3,rad=-0.3'))
+ax.text(0.5,14800,'−75.4%',fontsize=14,color='#0F6E56',ha='center',
         bbox=dict(boxstyle='round,pad=0.3',fc='#E1F5EE',ec='#0F6E56',lw=0.8))
 for s in ['top','right']: ax.spines[s].set_visible(False)
 ax.grid(axis='y',color='#D3D1C7',lw=0.4,alpha=0.5,zorder=0)
