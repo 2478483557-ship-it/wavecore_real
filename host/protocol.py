@@ -216,6 +216,21 @@ def timebase_fs_hz(tier: int) -> float:
     return float(TIMEBASE_SAMPLE_RATES[tier])
 
 
+def command_set_overlap(on: bool) -> bytes:
+    """
+    生成 0x91 帧重叠开关命令（协议 v1.22, 2026-10-16 新增）。
+
+    on=True  : 50% 帧重叠 —— 每帧只采 512 个新点, 前半复用上一帧的后半,
+               帧间没有信号空白(抓瞬态), 且采集时间减半 -> 频谱刷新率约翻倍。
+    on=False : 原来的整帧采集(默认, 保持既有已验证行为)。
+
+    实现要点: 采集与 FFT 共用同一块 RAM(原地 FFT 会摧毁数据), 所以上一帧的后半
+    先另存到 512x16 的独立小缓冲, 下一帧再预载回来。资源代价 = 几百 LUT, 不占 BRAM。
+    仿真判据: 第2帧的前半逐点 == 第1帧的后半(0/512 不符)。
+    """
+    return build_command(0x91, bytes([1 if on else 0]))
+
+
 def command_set_window(win: int) -> bytes:
     """
     生成 0x90 窗函数档位命令（协议 v1.22, 2026-10-16 新增）。

@@ -83,11 +83,31 @@ module tb_self_fft;
     always #10 clk = ~clk;                       // 20ns 周期 = 50MHz
 
     reg [1:0] win_cfg = 2'd1;            // [10-16] 0=矩形 1=Hann 2=Blackman (默认 Hann, 保持既有回归不变)
+    reg       ovl_en  = 1'b0;            // [0x91] 50% 帧重叠 (默认关, 保证既有回归不变)
+    reg [31:0] dec_cfg = 32'd0;          // [0x8D] 0=用参数 DECIM
+
+    //======== [10-16] 采集样点镜像(用于验证帧重叠) ========
+    // 只镜像**写入 RAM 的样点**(采集态 S_CAP=0 与预载态 S_PRE=18), 不含蝶形写。
+    // 判据: 开重叠跑第二帧后, cmir[0..511] 必须逐点等于第一帧的 cmir[512..1023]。
+    reg [15:0] cmir [0:1023];
+    reg [15:0] c1   [0:1023];
+    integer    ci;
+    initial for (ci = 0; ci < 1024; ci = ci + 1) begin cmir[ci] = 16'd0; c1[ci] = 16'd0; end
+    // 直接镜像 DUT 的**写决策**那一拍, 不走"we 打一拍"的滞后判定。
+    //   走 we 会踩两个坑: ① 采最后一个点时 st 同拍跳 S_START -> 漏抓;
+    //   ② S_WR2 的写落到下一拍时 st 已是 S_NEXT -> 把蝶形结果也抓进来。
+    always @(posedge clk) begin
+        if (u_dut.cap_on && u_dut.st == 5'd0 && u_dut.dcnt == u_dut.decim_use - 32'd1)
+            cmir[u_dut.wr_idx] <= u_dut.cap_samp;
+        if (u_dut.st == 5'd18)
+            cmir[u_dut.pre_idx] <= u_dut.sav[u_dut.pre_idx];
+    end
 
     self_fft_1024 #(.DECIM(32'd1), .USE_HANN(1'b1), .USE_INTERP(1'b1)) u_dut (  // 两个参数都改 1'b0 = 负向对照
         .clk(clk), .rst_n(rst_n), .ad_cap(ad_cap), .run(run),
-        .decim_cfg(32'd0), .fs_cfg(32'd0),   // [0x8D] 0 = 用参数(DECIM=1) / 50000
+        .decim_cfg(dec_cfg), .fs_cfg(32'd0),   // [0x8D] 0 = 用参数(DECIM=1) / 50000
         .win_cfg(win_cfg),                   // [0x90] 窗函数运行时可切换
+        .ovl_en(ovl_en),                     // [0x91] 50% 帧重叠
         .res_freq(res_freq), .res_f2(res_f2), .res_f3(res_f3),
         .res_done(res_done), .dbg_st(dbg_st), .dbg2(dbg2)
     );
@@ -433,6 +453,51 @@ module tb_self_fft;
                                                     (fr_hann > 990) && (fr_hann < 1010) &&
                                                     (fr_blk  > 990) && (fr_blk  < 1010));
         win_cfg = 2'd1;                          // 恢复默认 Hann
+
+        $display("-------- [10-16 新增] 50%% 帧重叠: 第2帧前半 应 == 第1帧后半 --------");
+        begin : ovl_t
+            integer i, bad, nz;
+            sel = 3'd1;                          // 纯正弦(周期信号), 移位后谱峰仍在 bin20
+            ovl_en = 1'b0;
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            @(posedge res_done); repeat (30) @(posedge clk);
+            nz = 0;
+            for (i = 0; i < 1024; i = i + 1) begin
+                c1[i] = cmir[i];
+                if (c1[i] !== 16'd0) nz = nz + 1;
+            end
+            $display("           第1帧(重叠关): 非零样点 %0d / 1024", nz);
+            chk("重叠关闭时第1帧采满 1024 点有数据", nz > 900);
+
+            ovl_en = 1'b1;                       // 打开重叠, 再跑一帧
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            fork : ovlw
+                begin : ovlto
+                    #4000000;
+                    $display("           [TIMEOUT] 重叠帧未完成 st=%0d wr_idx=%0d cap_on=%0d pre_idx=%0d dcnt=%0d",
+                             u_dut.st, u_dut.wr_idx, u_dut.cap_on, u_dut.pre_idx, u_dut.dcnt);
+                    bad = -1;
+                    disable ovlw;
+                end
+                begin
+                    @(posedge res_done); repeat (30) @(posedge clk);
+                    disable ovlw;
+                end
+            join
+
+            bad = 0;
+            for (i = 0; i < 512; i = i + 1)
+                if (cmir[i] !== c1[512+i]) begin
+                    if (bad < 3)
+                        $display("             不符点 i=%0d: 第2帧=%0d  第1帧[%0d]=%0d",
+                                 i, cmir[i], 512+i, c1[512+i]);
+                    bad = bad + 1;
+                end
+            $display("           第2帧前半 vs 第1帧后半: 不符 %0d / 512 点", bad);
+            chk("50%% 重叠生效: 第2帧前半逐点 == 第1帧后半", bad == 0);
+            chk("重叠后谱峰仍在 bin20", to_bin(res_freq) == 20);
+        end
+        ovl_en = 1'b0;
 
         $display("=====================================================");
         $display("RESULT: PASS=%0d  FAIL=%0d", n_pass, n_fail);

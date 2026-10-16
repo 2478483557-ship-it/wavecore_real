@@ -22,6 +22,7 @@ module self_fft_1024 #(
     input  wire [31:0] decim_cfg,    // [0x8D] 时基抽取比(0 = 用参数 DECIM)
     input  wire [31:0] fs_cfg,       // [0x8D] 等效采样率 Hz(0 = 用 50000)
     input  wire [1:0]  win_cfg,      // [0x90] 窗函数: 0=矩形 1=Hann 2=Blackman  (10-16 新增)
+    input  wire        ovl_en,       // [0x91] 50% 帧重叠: 0=原行为(1024点全新采集) 1=重叠  (10-16 新增)
     output reg  [23:0] res_freq,     // 峰值频率(Hz) = bin*50000/1024
     output reg  [23:0] res_f2,       // [调试] 第二峰
     output reg  [23:0] res_f3,       // [调试] 第三峰
@@ -138,7 +139,20 @@ module self_fft_1024 #(
                S_DONE = 5'd13,
                S_NB   = 5'd15,   // [v1.2] 第 4 趟: 采集三个峰的左右邻 bin
                S_NBRD = 5'd16,
-               S_ICALC= 5'd17;   // [v1.2] 插值计算(减法循环除法)
+               S_ICALC= 5'd17,   // [v1.2] 插值计算(减法循环除法)
+               S_PRE  = 5'd18;   // [10-16] 50% 帧重叠: 预载上一帧保存的后半 512 点
+
+    //======== [10-16] 50% 帧重叠的配套存储 ========
+    // 动机: 采集与 FFT **共用同一块 RAM**(原地 FFT 会摧毁数据), 所以上一帧的后半段
+    //   必须先**另存**到独立小缓冲, 下一帧再预载回来 —— 这样新帧 = [旧512 | 新512],
+    //   形成 50% 滑窗。收益: 帧间不再有信号空白(抓瞬态), 且采集时间减半 -> 频谱刷新率约翻倍。
+    // 代价: 512x16 分布式 RAM(约几百 LUT), BRAM 不占。
+    (* ram_style = "distributed" *) reg [15:0] sav [0:511];
+    reg        first_run;             // 复位后第一帧没有"上一帧", 走完整 1024 点采集
+    reg [9:0]  pre_idx;
+    wire       sav_we = cap_on && (st==S_CAP) && (dcnt==decim_use-32'd1) && wr_idx[9];
+    always @(posedge clk)
+        if (sav_we) sav[wr_idx[8:0]] <= cap_samp;   // wr_idx 512..1023 -> 索引 0..511
 
     reg [3:0]  stage;
     reg [9:0]  base, j, half, nblk, blk, i1, i2;
@@ -296,6 +310,7 @@ module self_fft_1024 #(
             pk_go<=1'b0;
             addr<=0; din<=0; we<=0; tw_addr<=0; w_addr<=0;
             stage<=0; base<=0; j<=0; half<=10'd512; nblk<=10'd1; blk<=0; i1<=0; i2<=0;
+            first_run<=1'b1; pre_idx<=10'd0;      // [10-16] 50% 重叠: 复位后首帧采满
             ar<=0;ai<=0;br<=0;bi<=0;cr<=0;ci<=0;
             p_rr<=0;p_ii<=0;p_ri<=0;p_ir<=0;
             res_freq<=0; res_done<=0; pk_addr<=0; pk_best<=0; pk_bin<=0; scan<=2'd0;
@@ -311,12 +326,20 @@ module self_fft_1024 #(
 
             // ---- 采集(仅收到 run 后进行一次) ----
             if (!cap_on && run_l && st==S_CAP) begin
-                cap_on <= 1'b1;
                 run_l  <= 1'b0;
-                dcnt   <= 32'd0;
-                wr_idx <= 10'd0;
-                cnt_wr <= 11'd0;      // [调试] 清体检计数
-                cnt_cy <= 24'd0;
+                // [10-16] 50% 重叠: 除复位后第一帧外, 先预载上一帧保存的后半 512 点,
+                //   再只采 512 个新点 -> 新帧 = [旧512 | 新512]。
+                if (ovl_en && !first_run) begin
+                    pre_idx <= 10'd0;
+                    st      <= S_PRE;
+                end
+                else begin
+                    cap_on <= 1'b1;
+                    dcnt   <= 32'd0;
+                    wr_idx <= 10'd0;
+                    cnt_wr <= 11'd0;      // [调试] 清体检计数
+                    cnt_cy <= 24'd0;
+                end
             end
             else if (cap_on && st==S_CAP) begin
                 cnt_cy <= cnt_cy + 24'd1;   // [调试] 采集拍数
@@ -344,6 +367,7 @@ module self_fft_1024 #(
                         cnt_wr <= cnt_wr + 11'd1;    // [调试] 点数
                     if (wr_idx==10'd1023) begin
                         wr_idx<=0; cap_on<=1'b0; st<=S_START;
+                        first_run <= 1'b0;           // [10-16] 第一帧采满过, 之后可走重叠
                         lat_wr <= cnt_wr + 11'd1;   // [调试] 锁存(含本拍)
                         lat_cy <= cnt_cy + 24'd1;
                     end
@@ -354,6 +378,27 @@ module self_fft_1024 #(
 
             case (st)
                 S_CAP: ;    // [09-19 修复] 空项: 防 default 吞掉"采集结束->S_START"的赋值
+                // [10-16] 50% 帧重叠的预载状态。
+                //   (注意) 必须作为**正式的 case 项**放在这里: 主 case 末尾有 `default: st<=S_CAP;`,
+                //   若只在 case 外面写 `else if (st==S_PRE)`, 会被那个 default 立刻打回 S_CAP
+                //   —— 实测现象就是"预载只走一步(pre_idx=1)就退回采集态、帧永远完不成"。
+                S_PRE: begin
+                    // 把上一帧保存的后半 512 点写回 mem[0..511](数据放高 16 位, 与采集同格式)
+                    addr   <= {1'b0, pre_idx};
+                    din    <= {sav[pre_idx], 16'd0};
+                    we     <= 1'b1;
+                    w_addr <= {1'b0, pre_idx};     // 窗系数跟着走, 与采集期同口径
+                    if (pre_idx == 10'd511) begin
+                        pre_idx <= 10'd0;
+                        wr_idx  <= 10'd512;        // 接着从后半段开始采新点
+                        dcnt    <= 32'd0;
+                        cap_on  <= 1'b1;
+                        cnt_wr  <= 11'd512;
+                        cnt_cy  <= 24'd0;
+                        st      <= S_CAP;
+                    end
+                    else pre_idx <= pre_idx + 10'd1;
+                end
                 S_START: begin
                     stage<=0; base<=0; blk<=0; j<=0;
                     half<=10'd512; nblk<=10'd1;

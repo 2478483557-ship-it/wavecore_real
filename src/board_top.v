@@ -133,6 +133,8 @@ wire        pre_set_w;   // [0x8F] 预触发档位生效脉冲
 wire [1:0]  pre_sel_w;   // [0x8F] 预触发档 0=0%/1=25%/2=50%/3=75% -> wave_frame
 wire        win_set_w;   // [0x90] 窗函数档位生效脉冲(未使用, 留作回执/闪灯)  [10-16]
 wire [1:0]  win_cfg_w;   // [0x90] 窗函数 0=矩形 1=Hann 2=Blackman -> self_fft_1024
+wire        ovl_set_w;   // [0x91] 帧重叠档位生效脉冲(留作回执)  [10-16]
+wire        ovl_en_w;    // [0x91] 50% 帧重叠使能 -> self_fft_1024  [10-16]
 
     // ---- 0.7c [0x8E] 幅度谱帧相关线(同样必须先声明后使用; 下方 3.7/3.9 会用到) ----
     wire        spec_req_w;    // 0x8E 请求脉冲(cmd_decoder 输出)
@@ -167,6 +169,8 @@ wire [1:0]  win_cfg_w;   // [0x90] 窗函数 0=矩形 1=Hann 2=Blackman -> self_
         .pre_sel     (pre_sel_w   ),
         .win_set     (win_set_w   ),   // [0x90] 窗函数
         .win_sel     (win_cfg_w   ),
+        .ovl_set     (ovl_set_w   ),   // [0x91] 50% 帧重叠
+        .ovl_sel     (ovl_en_w    ),
         .sf_run      (sf_run_w    ),
         .sweep_en    (sweep_en_w  ),
         .cal_kn      (cal_kn_w    ),
@@ -385,7 +389,8 @@ wire [1:0]  win_cfg_w;   // [0x90] 窗函数 0=矩形 1=Hann 2=Blackman -> self_
         .ad_cap   (ad_cap    ),
         .decim_cfg(tb_decim_w),
         .fs_cfg   (tb_fs_w   ),
-        .win_cfg  (win_cfg_w ),   // [0x90] 窗函数运行时可切换
+        .win_cfg  (win_cfg_w ),
+        .ovl_en   (ovl_en_w  ),   // [0x91] 50% 帧重叠   // [0x90] 窗函数运行时可切换
         .run      (sf_run_w | spec_run_w),   // 0x8A 或 0x8E 都触发一次运行
         .res_freq (sf_freq_w ),
         .res_f2   (sf_f2_w   ),
