@@ -23,6 +23,9 @@ module self_fft_1024 #(
     input  wire [31:0] fs_cfg,       // [0x8D] 等效采样率 Hz(0 = 用 50000)
     input  wire [1:0]  win_cfg,      // [0x90] 窗函数: 0=矩形 1=Hann 2=Blackman  (10-16 新增)
     input  wire        ovl_en,       // [0x91] 50% 帧重叠: 0=原行为(1024点全新采集) 1=重叠  (10-16 新增)
+    input  wire        inv_run,      // [0x92] IFFT 频域滤波: 在已完成的正向 FFT 上再跑一趟反向  (10-16 新增)
+    input  wire [9:0]  mask_lo,      // [0x92] 掩膜低 bin(含)
+    input  wire [9:0]  mask_hi,      // [0x92] 掩膜高 bin(含)
     output reg  [23:0] res_freq,     // 峰值频率(Hz) = bin*50000/1024
     output reg  [23:0] res_f2,       // [调试] 第二峰
     output reg  [23:0] res_f3,       // [调试] 第三峰
@@ -150,6 +153,24 @@ module self_fft_1024 #(
     (* ram_style = "distributed" *) reg [15:0] sav [0:511];
     reg        first_run;             // 复位后第一帧没有"上一帧", 走完整 1024 点采集
     reg [9:0]  pre_idx;
+
+    //======== [10-16] IFFT 频域滤波 ========
+    // 算法(已由 hw_analysis/model_ifft.py 数值钉死): 反向 = **自然序频谱 + 共轭旋转因子**。
+    //   本引擎的谱是位反转存储(mem[k]=X[rev10(k)]), 而 mem[rev10(a)] 恰好是自然序 X[a]，
+    //   所以反向只需把**地址过一次 rev10**、并把 twiddle 的 sin 取负 —— 不重构蝶形。
+    // 掩膜: 在 stage0 读入时把 [mask_lo,mask_hi] 及其**镜像**一并置零。
+    //   镜像必须一起掩: 实信号的谱共轭对称, 只掩一半会留下复数残留。
+    // 增益: 每级 >>1 -> 往返衰减 1/N(见 model_ifft.py)。本版先保证算法正确。
+    reg  inv_mode;
+    function in_mask;
+        input [9:0] b;
+        begin
+            in_mask = 1'b0;
+            if (b >= mask_lo && b <= mask_hi) in_mask = 1'b1;
+            if (mask_lo != 10'd0 && b >= (10'd1024 - mask_hi) && b <= (10'd1024 - mask_lo))
+                in_mask = 1'b1;
+        end
+    endfunction
     wire       sav_we = cap_on && (st==S_CAP) && (dcnt==decim_use-32'd1) && wr_idx[9];
     always @(posedge clk)
         if (sav_we) sav[wr_idx[8:0]] <= cap_samp;   // wr_idx 512..1023 -> 索引 0..511
@@ -311,6 +332,8 @@ module self_fft_1024 #(
             addr<=0; din<=0; we<=0; tw_addr<=0; w_addr<=0;
             stage<=0; base<=0; j<=0; half<=10'd512; nblk<=10'd1; blk<=0; i1<=0; i2<=0;
             first_run<=1'b1; pre_idx<=10'd0;      // [10-16] 50% 重叠: 复位后首帧采满
+            inv_mode<=1'b0;                       // [10-16] IFFT: 必须复位! 否则正向通路的
+                                                  //   `inv_mode ? rev10(..) : ..` 地址选择会是 X
             ar<=0;ai<=0;br<=0;bi<=0;cr<=0;ci<=0;
             p_rr<=0;p_ii<=0;p_ri<=0;p_ir<=0;
             res_freq<=0; res_done<=0; pk_addr<=0; pk_best<=0; pk_bin<=0; scan<=2'd0;
@@ -340,6 +363,9 @@ module self_fft_1024 #(
                     cnt_wr <= 11'd0;      // [调试] 清体检计数
                     cnt_cy <= 24'd0;
                 end
+            end
+            else if (inv_run && !inv_mode && st==S_CAP) begin
+                inv_mode <= 1'b1;  cap_on <= 1'b0;  st <= S_START;
             end
             else if (cap_on && st==S_CAP) begin
                 cnt_cy <= cnt_cy + 24'd1;   // [调试] 采集拍数
@@ -404,15 +430,19 @@ module self_fft_1024 #(
                     half<=10'd512; nblk<=10'd1;
                     st<=S_RD1;
                 end
-                S_RD1: begin i1<=base+j; addr<=base+j; w1_go<=1'b0; st<=S_W1; end
+                S_RD1: begin i1<=base+j; addr<= inv_mode ? rev10(base+j) : (base+j); w1_go<=1'b0; st<=S_W1; end
                 S_W1:  begin
                              if (!w1_go) w1_go<=1'b1;          // 多等一拍: 兼容 2 拍读延迟
                              else begin
-                                 ar<=dout[31:16]; ai<=dout[15:0];
+                                 if (inv_mode && stage==4'd0 && (in_mask(i1) || in_mask(i2))) begin
+                                     ar<=16'sd0; ai<=16'sd0;
+                                 end else begin
+                                     ar<=dout[31:16]; ai<=dout[15:0];
+                                 end
                                  i2<=(base+j)+half; st<=S_RD2;
                              end
                          end
-                S_RD2: begin addr<=i2; w2_go<=1'b0; st<=S_W2; end
+                S_RD2: begin addr<= inv_mode ? rev10(i2) : i2; w2_go<=1'b0; st<=S_W2; end
                 S_W2:  begin
                              if (!w2_go) w2_go<=1'b1;          // 多等一拍
                              else begin
@@ -421,7 +451,7 @@ module self_fft_1024 #(
                              end
                          end
                 S_MUL: begin st<=S_MUL2; end
-                S_MUL2:begin cr<=tw_c; ci<=tw_s; st<=S_MUL3; end
+                S_MUL2:begin cr<=tw_c; ci<= inv_mode ? (~tw_s + 16'd1) : tw_s; st<=S_MUL3; end  // [10-16] 反向取共轭
                 S_MUL3:begin                                  // 乘法打拍
                              p_rr <= difr * cr;
                              p_ii <= difi * ci;
@@ -429,8 +459,8 @@ module self_fft_1024 #(
                              p_ir <= difi * cr;
                              st   <= S_WR1;
                          end
-                S_WR1: begin addr<=i1; din<={o1r,o1i}; we<=1'b1; st<=S_WR2; end
-                S_WR2: begin addr<=i2; din<={o2r,o2i}; we<=1'b1; st<=S_NEXT; end
+                S_WR1: begin addr<= inv_mode ? rev10(i1) : i1; din<={o1r,o1i}; we<=1'b1; st<=S_WR2; end
+                S_WR2: begin addr<= inv_mode ? rev10(i2) : i2; din<={o2r,o2i}; we<=1'b1; st<=S_NEXT; end
                 S_NEXT: begin
                     if (j+1 < half) begin
                         j  <= j + 10'd1;
@@ -445,7 +475,10 @@ module self_fft_1024 #(
                         end
                         else begin
                             blk <= 0; base <= 0;
-                            if (stage==4'd9) begin
+                            if (stage==4'd9 && inv_mode) begin   // [10-16] 反向跑完 -> 直接出结果
+                                inv_mode <= 1'b0;  st <= S_DONE;
+                            end
+                            else if (stage==4'd9) begin
                                 pk_addr<=0; pk_best<=0; pk_bin<=0; m2<=0; m3<=0; b2<=0; b3<=0;
                                 // [10-16 排查记录] 曾怀疑“扫描期间 we 未清 -> 读的同时在写、自我破坏”,
                                 //   经查 we 是在 else 分支首行**默认清零**的(标准“默认赋值+分支覆盖”),
