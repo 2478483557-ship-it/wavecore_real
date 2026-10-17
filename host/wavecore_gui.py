@@ -633,7 +633,7 @@ class WaveCoreApp:
         ttk.Label(controls, text="频域滤波：").grid(row=8, column=0, pady=(6, 0))
         ttk.Spinbox(
             controls, from_=0, to=511, width=5, textvariable=self.mask_lo_var
-        ).grid(row=8, column=1, padx=(4, 0), pady=(6, 0))
+        ).grid(row=8, column=1, padx=(4, 16), pady=(6, 0))
         ttk.Label(controls, text="~").grid(row=8, column=1, pady=(6, 0), sticky="e")
         ttk.Spinbox(
             controls, from_=0, to=511, width=5, textvariable=self.mask_hi_var
@@ -655,7 +655,7 @@ class WaveCoreApp:
         self.nn_button.grid(row=8, column=6, padx=4, pady=(6, 0))
         ttk.Checkbutton(
             controls, text="DAC 回放", variable=self.play_var, command=self.toggle_play
-        ).grid(row=8, column=5, columnspan=2, padx=4, pady=(6, 0), sticky="w")
+        ).grid(row=8, column=5, columnspan=1, padx=4, pady=(6, 0), sticky="w")
         ttk.Label(controls, textvariable=self.ifft_info_var).grid(
             row=8, column=7, columnspan=2, padx=(12, 0), pady=(6, 0), sticky="w"
         )
@@ -663,7 +663,7 @@ class WaveCoreApp:
         ttk.Label(
             controls,
             textvariable=self.applied_settings_var,
-        ).grid(row=6, column=0, columnspan=9, pady=(6, 0), sticky="w")
+        ).grid(row=9, column=0, columnspan=9, pady=(6, 0), sticky="w")
 
         self.plot_notebook = ttk.Notebook(self.root)
         self.plot_notebook.grid(row=3, column=0, sticky="nsew", padx=12, pady=(4, 10))
