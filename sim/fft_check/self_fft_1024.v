@@ -186,8 +186,8 @@ module self_fft_1024 #(
     //   拼起来 25 位, 赋给 24 位被**截断**, 于是 SF 显示成乱数(实机差值是 4096 的整数倍,
     //   正是 st<<12 的痕迹, 从用户数据反推确认)。
     //   改成十进制友好编码, 保证 < 10^7(上报只有 7 位):
-    //     SF = 500000 + st*1000 + 标志字节
-    //     解码: 状态机 = (SF-500000)/1000, 标志 = (SF-500000)%1000 的二进制
+    //     SF = 500000 + st*1024 + 标志字节
+    //     解码: 状态机 = (SF-500000)/1024, 标志 = (SF-500000)%1024 的二进制
     //     标志位: bit4=play_en bit3=inv_done bit2=inv_pend bit1=inv_mode bit0=cap_on
     wire [7:0] dbg_flag = {3'd0, play_en, inv_done, inv_pend, inv_mode, cap_on};
     wire [23:0] dbg_sf = 24'd500000 + {st, 10'd0} + {16'd0, dbg_flag};
@@ -471,6 +471,9 @@ module self_fft_1024 #(
                 S_PLAY: begin
                     // addr 每 decim_use 拍才变 -> 读延迟被吃掉, dout 在采样当拍就是 mem[play_idx]
                     addr <= play_idx;
+                    // [10-17] we 已由本 always 块顶部的默认赋值(else begin 后第一句)每拍清零,
+                    //   这里再写一次只为显式表达意图, 不改变行为。
+                    we <= 1'b0;
                     // [10-17 修复·关键] 回放期间来了 0x92(反向变换请求) 必须**让位**。
                     //   根因: 反向变换的触发条件要求 st==S_CAP, 而回放时 FSM 停在 S_PLAY,
                     //   于是"先开回放、再发 0x92"这个顺序下 **反向永远跑不起来**,
