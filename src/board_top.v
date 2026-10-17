@@ -146,7 +146,13 @@ wire [3:0]  dbg_play_w;  // [10-17 诊断] 回放链路 4 个关键点
 // [10-17] 开回放时 4 个 LED 借给诊断用(平时不影响原指示灯):
 //   LED0 = play_en 生效   LED1 = da_play 在变化(会闪)
 //   LED2 = FSM 进了 S_PLAY   LED3 = 反向变换跑过
-assign led = play_en_w ? dbg_play_w : led_freq;
+// [10-17 诊断] 在**顶层**再粘一个 ifft_set_w 的标志, 绕开 self_fft_1024 内部,
+//   用来分清"信号到没到顶层连线"和"到了但模块内部没反应"这两件事。
+reg ifft_sticky;
+always @(posedge sys_clk or negedge sys_rst_n)
+    if (!sys_rst_n)        ifft_sticky <= 1'b0;
+    else if (ifft_set_w)   ifft_sticky <= 1'b1;
+assign led = play_en_w ? {dbg_play_w[3] | ifft_sticky, dbg_play_w[2:0]} : led_freq;
 
     // ---- 0.7c [0x8E] 幅度谱帧相关线(同样必须先声明后使用; 下方 3.7/3.9 会用到) ----
     wire        spec_req_w;    // 0x8E 请求脉冲(cmd_decoder 输出)
