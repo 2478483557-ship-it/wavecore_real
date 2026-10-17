@@ -28,6 +28,8 @@ module self_fft_1024 #(
     input  wire [9:0]  mask_hi,      // [0x92] 掩膜高 bin(含)
     input  wire        play_en,      // [0x93] 回放使能: 循环把 mem 里的时域结果送 DAC  (10-16 新增)
     output reg  [7:0]  da_play,      // [0x93] 送 AD9708 的 8bit 偏置二进制样点
+    output wire [3:0]  dbg_play,     // [10-17 诊断] {inv_done, 在S_PLAY, da_play在动, play_en}
+                                     //   直接送板上的 4 个 LED, 一眼看出回放卡在哪一环
     output reg  [23:0] res_freq,     // 峰值频率(Hz) = bin*50000/1024
     output reg  [23:0] res_f2,       // [调试] 第二峰
     output reg  [23:0] res_f3,       // [调试] 第三峰
@@ -169,6 +171,11 @@ module self_fft_1024 #(
     // IFFT 输出 = 时域波形, 就在 mem 里(存储序即时间序)。
     // 幅度换算: 往返衰减 1/N(IFFT 输出约 +-24), 8bit DAC 居中 128 需要 +-128
     //   -> 增益取 5 倍((y<<2)+y), 再按 +-127 饱和, 最后加 128 转成偏置二进制。
+    // [10-17 诊断] 回放链路 4 个关键点, 对应 LED0..LED3
+    assign dbg_play = { inv_done,                    // LED3: 反向变换跑过没有
+                        (st == S_PLAY),              // LED2: 有没有进回放态
+                        (da_play != 8'd128),         // LED1: 有没有真产生样点(会闪)
+                        play_en };                   // LED0: 0x93 命令到没到
     reg  [9:0]  play_idx;
     reg  signed [19:0] play_g;
     reg  signed [19:0] play_c;
