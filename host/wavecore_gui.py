@@ -322,6 +322,9 @@ class WaveCoreApp:
         self.ifft_info_var = tk.StringVar(value="频域滤波未设置")
         self.timebase_info_var = tk.StringVar()
         self.spectrum_info_var = tk.StringVar(value="尚未请求频谱")
+        # [10-17] 实时判据: 底噪(看窗函数) + 帧率(看帧重叠)。都是已有数据算出来的。
+        self._spec_last_t = None
+        self._spec_fps = 0.0
         self.waveform_info_var = tk.StringVar(value="尚未请求波形")
         self.auto_waveform_var = tk.BooleanVar(value=False)
         self.waveform_interval_var = tk.StringVar(value="2 s")
@@ -1037,6 +1040,9 @@ class WaveCoreApp:
             self.spectrum_info_var.set(
                 f"实时频谱已停止，共收到{self.spectrum_frame_count}帧"
             )
+        # [10-17] 停频谱时清掉帧率, 免得下次显示陈旧值
+        self._spec_last_t = None
+        self._spec_fps = 0.0
 
     def _schedule_spectrum_request(self):
         if not self.spectrum_running:
@@ -1802,9 +1808,24 @@ class WaveCoreApp:
         self.waterfall_axis.set_xlim(0, span_khz)
 
         if count_frame:
+            # [10-17] 底噪: 取"离主峰 15 个 bin 以外"的谱线均值。
+            #   切窗函数时这个数会明显变化(矩形最高 / Hann最低), 比目测频谱图可靠。
+            far = [codes[k] for k in range(512)
+                   if abs(k - peak_bin) > 15 and codes[k] > 0]
+            floor = (sum(far) / len(far)) if far else 0.0
+            # [10-17] 帧率: 开帧重叠后采集时间减半, 这个数会明显上升。
+            import time as _time
+            now = _time.time()
+            if self._spec_last_t is not None and now > self._spec_last_t:
+                inst = 1.0 / (now - self._spec_last_t)
+                self._spec_fps = (0.7 * self._spec_fps + 0.3 * inst
+                                  if self._spec_fps else inst)
+            self._spec_last_t = now
             self.spectrum_info_var.set(
                 f"第{self.spectrum_frame_count}帧｜"
                 f"峰值 {peak_hz:.1f} Hz｜"
+                f"底噪 {floor:.1f}｜"
+                f"{self._spec_fps:.1f} 帧/s｜"
                 f"T{self.current_timebase_index + 1} fs={fs_hz / 1000:g} kHz"
             )
 
