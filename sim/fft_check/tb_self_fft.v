@@ -88,6 +88,8 @@ module tb_self_fft;
     reg        inv_run  = 1'b0;          // [0x92] IFFT 反向通行脉冲
     reg [9:0]  mask_lo  = 10'd0;         // [0x92] 掩膜低 bin
     reg [9:0]  mask_hi  = 10'd0;         // [0x92] 掩膜高 bin
+    reg        play_en  = 1'b0;           // [0x93] DAC 回放使能
+    wire [7:0] da_play;
     function [9:0] rev10f;
         input [9:0] x;
         integer b;
@@ -122,6 +124,8 @@ module tb_self_fft;
         .inv_run(inv_run),                   // [0x92] IFFT 频域滤波
         .mask_lo(mask_lo),
         .mask_hi(mask_hi),
+        .play_en(play_en),
+        .da_play(da_play),
         .res_freq(res_freq), .res_f2(res_f2), .res_f3(res_f3),
         .res_done(res_done), .dbg_st(dbg_st), .dbg2(dbg2)
     );
@@ -541,6 +545,47 @@ module tb_self_fft;
             $display("  IFFT 完成, 导出时域(fmir 镜像, 自然序):");
             for (k = 0; k < 1024; k = k + 1)
                 $display("IFFT %0d %0d", k, $signed(fmir[rev10f(k[9:0])][31:16]));
+        end
+
+        $display("-------- [10-17 新增] IFFT 结果 DAC 回放通路 --------");
+        begin : play_t
+            integer i, nz, mn, mx, v;
+            sel = 3'd3; ovl_en = 1'b0; play_en = 1'b0;
+            mask_lo = 10'd98; mask_hi = 10'd102;
+            // 正向 FFT
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            @(posedge res_done); repeat (40) @(posedge clk);
+            // 反向 IFFT
+            @(negedge clk); inv_run = 1'b1; @(negedge clk); inv_run = 1'b0;
+            fork : pw
+                begin : pto
+                    #4000000;
+                    $display("  [TIMEOUT] 反向未完成 st=%0d", u_dut.st);
+                    disable pw;
+                end
+                begin
+                    @(posedge res_done); repeat (60) @(posedge clk);
+                    disable pw;
+                end
+            join
+            // ★ 关键: 先开回放再看有没有进 S_PLAY(这就是实机"什么都没有"的复现点)
+            play_en = 1'b1;
+            repeat (600) @(posedge clk);
+            $display("  开回放后 st=%0d (S_PLAY=19)  inv_done=%0d  da_play=%0d",
+                     u_dut.st, u_dut.inv_done, da_play);
+            chk("开回放后进入 S_PLAY 且 inv_done=1", (u_dut.st == 5'd19) && u_dut.inv_done);
+            nz = 0; mn = 999; mx = -1;
+            for (i = 0; i < 2000; i = i + 1) begin
+                @(posedge clk);
+                v = da_play;
+                if (v != 128) nz = nz + 1;
+                if (v < mn) mn = v;
+                if (v > mx) mx = v;
+            end
+            $display("  da_play 采样: 非中值 %0d/2000  范围 [%0d, %0d]", nz, mn, mx);
+            chk("DA 输出不再是常量中值(回放真的在跑)", nz > 100);
+            chk("DA 幅度合理(有摆动且没顶死)", (mx > 130) && (mn < 126));
+            play_en = 1'b0;
         end
 
         $display("=====================================================");
