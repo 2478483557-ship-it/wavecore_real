@@ -757,6 +757,27 @@ module tb_self_fft;
             repeat (300) @(posedge clk);
         end
 
+        $display("-------- [10-17] dump IFFT 输出波形供离线分析 --------");
+        begin : dump_t
+            integer k, fd;
+            sel = 3'd3; ovl_en = 1'b0; play_en = 1'b0;
+            mask_lo = 10'd96; mask_hi = 10'd108;
+            win_cfg = 2'd1;   // [10-17] 保持默认 Hann(与板上一致)
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            @(posedge res_done); repeat (80) @(posedge clk);
+            @(negedge clk); inv_run = 1'b1; @(negedge clk); inv_run = 1'b0;
+            @(posedge res_done); repeat (80) @(posedge clk);
+            fd = $fopen("ifft_dump.txt", "w");
+            for (k = 0; k < 1024; k = k + 1) begin
+                @(negedge clk); force u_dut.addr = k[9:0];
+                @(negedge clk); @(negedge clk);
+                $fdisplay(fd, "%0d", $signed(u_dut.dout[31:16]));
+            end
+            $fclose(fd);
+            release u_dut.addr;
+            $display("  已写出 ifft_dump.txt (1024 点)");
+        end
+
         $display("=====================================================");
         $display("RESULT: PASS=%0d  FAIL=%0d", n_pass, n_fail);
         if (n_fail == 0) $display("*** 全部通过 ***  (6 个场景 + 11 项 0x8E 幅度谱检查: A/B 严格, C 分不开, D 真双峰, E 非整数bin, F 高bin溢出)");
