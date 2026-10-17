@@ -369,7 +369,12 @@ module self_fft_1024 #(
             addr<=0; din<=0; we<=0; tw_addr<=0; w_addr<=0;
             stage<=0; base<=0; j<=0; half<=10'd512; nblk<=10'd1; blk<=0; i1<=0; i2<=0;
             first_run<=1'b1; pre_idx<=10'd0;      // [10-16] 50% 重叠: 复位后首帧采满
-            inv_mode<=1'b0; inv_pend<=1'b0; inv_done<=1'b0; inv_seen<=1'b0; play_idx<=10'd0; play_g<=20'sd0; play_c<=20'sd0;
+            // [10-17 修复·根因] 这里**不能**再赋 inv_pend / inv_seen —— 它们各自有自己的
+            //   专属 always 块做复位(见上方)。同一个 reg 被两个 always 驱动 = 多驱动,
+            //   综合后互相打架, 实测表现为**恒为 0**, 于是 0x92 的请求永远进不来,
+            //   反向变换从设计之初在板上就一次也没跑过。
+            //   inv_done / inv_mode 只在本块里赋值, 留在这里是对的。
+            inv_mode<=1'b0; inv_done<=1'b0; play_idx<=10'd0; play_g<=20'sd0; play_c<=20'sd0;
             da_play<=8'd128;                     // [10-16] IFFT: 必须复位! 否则正向通路的
                                                   //   `inv_mode ? rev10(..) : ..` 地址选择会是 X
             ar<=0;ai<=0;br<=0;bi<=0;cr<=0;ci<=0;
