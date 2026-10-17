@@ -723,6 +723,40 @@ module tb_self_fft;
             play_en = 1'b0;
         end
 
+        $display("-------- [10-17] 回放期间收到 run(0x8E) 不许打断回放 --------");
+        begin : nointerrupt_t
+            integer k, nz, dmin, dmax;
+            sel = 3'd3; ovl_en = 1'b0; play_en = 1'b0;
+            mask_lo = 10'd98; mask_hi = 10'd102;
+            // 正向 + 反向, 准备出时域波形
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            @(posedge res_done); repeat (60) @(posedge clk);
+            @(negedge clk); inv_run = 1'b1; @(negedge clk); inv_run = 1'b0;
+            @(posedge res_done); repeat (60) @(posedge clk);
+            // 开回放
+            play_en = 1'b1;
+            repeat (1200) @(posedge clk);
+            chk("开回放后进入 S_PLAY", u_dut.st == 5'd19);
+            // ★ 回放中发一次 run(模拟 GUI 的 0x8E 轮询)
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            repeat (3000) @(posedge clk);
+            $display("  回放中发 run 之后: st=%0d (应仍为 19, 不许被打断)", u_dut.st);
+            chk("回放期间 run 不打断回放", u_dut.st == 5'd19);
+            // 再看 da_play 是否仍在变化
+            nz = 0; dmin = 999; dmax = -1;
+            for (k = 0; k < 4000; k = k + 1) begin
+                @(posedge clk);
+                if (da_play !== 8'd128) nz = nz + 1;
+                if (da_play > dmax) dmax = da_play;
+                if (da_play < dmin) dmin = da_play;
+            end
+            $display("  回放中发 run 之后 da_play: 非中值 %0d/4000, 范围 [%0d,%0d]",
+                     nz, dmin, dmax);
+            chk("run 之后 DA 仍然有波形(不回落到直流)", nz > 200);
+            play_en = 1'b0;
+            repeat (300) @(posedge clk);
+        end
+
         $display("=====================================================");
         $display("RESULT: PASS=%0d  FAIL=%0d", n_pass, n_fail);
         if (n_fail == 0) $display("*** 全部通过 ***  (6 个场景 + 11 项 0x8E 幅度谱检查: A/B 严格, C 分不开, D 真双峰, E 非整数bin, F 高bin溢出)");

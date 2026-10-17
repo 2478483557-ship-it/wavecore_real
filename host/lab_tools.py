@@ -210,13 +210,22 @@ def cmd_ifft(sp, f_main=1000, f_notch=5000):
     # [10-17] 关键自检: 掩膜只能掩掉"多余的那一个音"。
     #   如果频谱里只有一根柱子(单音), 掩掉它之后 IFFT 输出必然是 0,
     #   DAC 只会输出中值直流 —— 看起来像"回放坏了", 其实是对的。
+    # [10-17 修正] 窗口放到 +/-12 bin(约 +/-586Hz)。
+    #   实机 SF/S2 报的是 999 和 4997, 理论 bin 是 20/102, 实际落点会偏 1~2 bin;
+    #   原来只给 +/-4, 反而会把"双音正常"误判成"没有干扰音", 是错误拦截。
     b_main = int(round(f_main / DF))
     b_notch = int(round(f_notch / DF))
-    def peak_near(b, w=4):
+    WIN = 12
+
+    def peak_near(b, w=WIN):
         lo, hi = max(0, b - w), min(NBIN - 1, b + w)
         return max(range(lo, hi + 1), key=lambda k: s[k])
+
     pm, pn = peak_near(b_main), peak_near(b_notch)
-    floor = statistics.mean([s[k] for k in range(NBIN) if s[k] > 0]) or 1
+    # 底噪取"离两个峰都远"的谱线
+    floor = statistics.mean(
+        [s[k] for k in range(NBIN)
+         if abs(k - pm) > 20 and abs(k - pn) > 20 and s[k] > 0]) or 1
     has_main = s[pm] > floor * 3
     has_notch = s[pn] > floor * 3
     print("  主音 %d Hz (bin %d): 码值 %d  %s" % (f_main, pm, s[pm], "有" if has_main else "**没有**"))
