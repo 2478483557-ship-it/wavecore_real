@@ -16,12 +16,21 @@ module self_fft_report (
     input  wire        fft_act,     // 谱峰行忙
     input  wire        wav_act,     // 波形帧忙
     output wire        uart_txd,
-    output wire        sf_active    // 占用TX标志
+    output wire        sf_active,   // 占用TX标志
+    // [10-17 新增] 0x94 状态回读: 不跑 FFT, 直接把三个调试值当作 SF/S2/S3 发出来。
+    //   用途: 反向变换/回放这条链在板上没有观察手段, 用它把内部状态读回来。
+    input  wire        dbg_req,     // 0x94 触发(1拍脉冲)
+    input  wire [23:0] dbg_v1,      // -> SF= 行
+    input  wire [23:0] dbg_v2,      // -> S2= 行
+    input  wire [23:0] dbg_v3       // -> S3= 行
 );
     // ---- 选择当前峰 ----
     reg  [1:0]  k_sel;              // 0=SF 1=S2 2=S3
-    wire [23:0] cur = (k_sel==2'd0) ? res_freq :
-                      (k_sel==2'd1) ? res_f2   : res_f3;
+    reg         dbg_mode;           // [10-17] 1 = 正在发调试值
+    wire [23:0] cur = dbg_mode ? ((k_sel==2'd0) ? dbg_v1 :
+                                   (k_sel==2'd1) ? dbg_v2 : dbg_v3)
+                                : ((k_sel==2'd0) ? res_freq :
+                                   (k_sel==2'd1) ? res_f2   : res_f3);
 
     // ---- 频率 BCD ----
     wire [27:0] f_bcd; wire f_done; reg f_start;
@@ -78,11 +87,14 @@ module self_fft_report (
             guard  <= 1'b0;
             pending<= 1'b0;
             k_sel  <= 2'd0;
+            dbg_mode <= 1'b0;
         end
         else begin
             tx_start <= 1'b0;
             f_start  <= 1'b0;
             if (res_done) pending <= 1'b1;   // 忙也不会丢
+            // [10-17] 0x94: 直接置 pending, 并标记这一轮发调试值
+            else if (dbg_req) begin pending <= 1'b1; dbg_mode <= 1'b1; end
 
             case (state)
                 S_WAIT: if (pending && !m_busy && !fft_act && !wav_act) begin
@@ -108,7 +120,7 @@ module self_fft_report (
                                 f_start <= 1'b1;
                                 state   <= S_CF;
                             end
-                            else state <= S_WAIT;
+                            else begin state <= S_WAIT; dbg_mode <= 1'b0; end
                         end
                         else begin
                             tx_byte  <= ch;

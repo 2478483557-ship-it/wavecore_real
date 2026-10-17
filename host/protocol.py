@@ -216,6 +216,25 @@ def timebase_fs_hz(tier: int) -> float:
     return float(TIMEBASE_SAMPLE_RATES[tier])
 
 
+def command_read_status() -> bytes:
+    """
+    生成 0x94 状态回读命令（协议 v1.22, 2026-10-17 新增）。
+
+    用途: 反向变换/回放这条链在板上没有观察手段。发这条命令后, 固件**不跑 FFT**,
+    直接把内部状态当作 SF / S2 / S3 三行发出来。
+
+    解码:
+        SF = 0xD0 | 状态机(1位十六进制) | 标志(1位十六进制)
+             例: "SF=0xD0900Hz" -> 0xD0 90 0
+                 状态机 = 0x9 = 9 (S_DONE), 标志 = 0
+             标志位(低 5 位): bit4=play_en bit3=inv_done bit2=inv_pend
+                              bit1=inv_mode bit0=cap_on
+        S2 = da_play 当前值(0~255)   —— 恒为 128 说明回放没在产生样点
+        S3 = play_idx(回放到第几个点, 0~1023) —— 不变说明没在推进
+    """
+    return build_command(0x94, b"")
+
+
 def command_play_ifft(on: bool) -> bytes:
     """
     生成 0x93 IFFT 结果回放命令（协议 v1.22, 2026-10-16 新增）。

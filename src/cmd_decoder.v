@@ -59,7 +59,8 @@ module cmd_decoder (
     output reg  [9:0]  ifft_lo,    // [0x92] 掩膜低 bin(含)
     output reg  [9:0]  ifft_hi,    // [0x92] 掩膜高 bin(含)
     output reg         play_set,   // [0x93] 回放档位生效(1拍脉冲)  [10-16]
-    output reg         play_sel    // [0x93] IFFT 结果回放: 0=关 1=DAC 回放
+    output reg         play_sel,   // [0x93] IFFT 结果回放: 0=关 1=DAC 回放
+    output reg         dbg_read    // [0x94] 状态回读触发(1拍脉冲)  [10-17]
 );
 
     // 换算常量: round(2^32/5e7 x 2^24)
@@ -121,6 +122,7 @@ module cmd_decoder (
             ifft_hi     <= 10'd0;
             play_set    <= 1'b0;
             play_sel    <= 1'b0;      // [10-16] 回放默认关, DDS 独占 DAC
+            dbg_read    <= 1'b0;
             spec_req    <= 1'b0;
             tb_set      <= 1'b0;
             pre_set     <= 1'b0;
@@ -228,6 +230,9 @@ module cmd_decoder (
                                 8'h91: begin             // [10-16] 50% 帧重叠: 0=关 1=开
                                     ovl_set <= 1'b1;
                                     ovl_sel <= pbuf[0][0];
+                                end
+                                8'h94: begin             // [10-17] 状态回读(0 字节负载)
+                                    dbg_read <= 1'b1;
                                 end
                                 8'h93: begin             // [10-16] IFFT 结果回放: 0=关 1=开
                                     play_set <= 1'b1;

@@ -37,6 +37,12 @@ module self_fft_1024 #(
     output wire [7:0]  spec_wdata,   // [0x8E] 压缩幅度(spec_compress 输出)
     output wire        busy,         // [0x8E] 运行中(采集/蝶形/扫描), 供 spec_frame 等待
     output wire [3:0]  dbg_st,       // [调试] 当前状态(0~13)
+    // [10-17 新增] 0x94 状态回读用的三个值(打包成 24 位, 由 self_fft_report 以 SF/S2/S3 发出)
+    //   SF = 0xD00000 | {状态机4位, play_en, inv_done, inv_pend, inv_mode, 32位计数高位}
+    //   S2 = da_play 当前值(0..255)      S3 = play_idx(回放到第几个点)
+    output wire [23:0] dbg_rd1,
+    output wire [23:0] dbg_rd2,
+    output wire [23:0] dbg_rd3,
     output wire [3:0]  dbg2          // [调试] {cap_on, wr_idx[9:7]}
 );
     // [09-27 修复] 原此处有一句重复的 "assign dbg_st = st;" 位于 reg 声明之前,
@@ -170,6 +176,17 @@ module self_fft_1024 #(
     reg  signed [19:0] play_c;
     reg  inv_done;   // 反向变换是否已跑完过(mem 里现在是不是"时域波形")
     reg  inv_pend;   // inv_run 只有 1 拍; 若 FSM 当时不在 S_CAP 就丢了 -> 先锁存
+
+    //======== [10-17] 0x94 状态回读的三个值 ========
+    //   打包成 24 位, 由 self_fft_report 直接当作 SF/S2/S3 三行发出去。
+    //   解码方式(正文里告诉用户):
+    //     SF = 0xD00000 | (st<<8) | (play_en<<4 | inv_done<<3 | inv_pend<<2 | inv_mode<<1 | cap_on)
+    //     即 SF 的十六进制前 4 位是 D, 后 4 位里: 高 2 位十六进制=状态机, 最低位=各标志
+    //   SF 十六进制: 前 2 位固定 D0, 第 3~4 位 = 状态机编号, 第 5~6 位 = 标志位(十六进制)
+    assign dbg_rd1 = {8'hD0, st, 7'd0,
+                      play_en, inv_done, inv_pend, inv_mode, cap_on};
+    assign dbg_rd2 = {16'd0, da_play};              // 送 DAC 的当前样点(0..255)
+    assign dbg_rd3 = {14'd0, play_idx};             // 回放到第几个点(0..1023)
 
     //======== [10-16] 回放通路(把 IFFT 结果送 DAC) ========
     // IFFT 输出 = 时域波形, 就在 mem 里(存储序即时间序)。

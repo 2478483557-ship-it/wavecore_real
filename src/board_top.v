@@ -141,6 +141,9 @@ wire [9:0]  ifft_hi_w;   // [0x92] 掩膜高 bin
 wire        play_set_w;  // [0x93] 回放档位生效脉冲
 wire        play_en_w;   // [0x93] 回放使能 -> self_fft_1024
 wire [7:0]  da_play_w;   // [0x93] 回放样点 -> da_send
+// [10-17] 0x94 状态回读: 三个 24 位值经 SF/S2/S3 三行发出
+wire [23:0] dbg_rd1_w, dbg_rd2_w, dbg_rd3_w;
+wire        dbg_read_w;   // 0x94 触发脉冲
 
     // ---- 0.7c [0x8E] 幅度谱帧相关线(同样必须先声明后使用; 下方 3.7/3.9 会用到) ----
     wire        spec_req_w;    // 0x8E 请求脉冲(cmd_decoder 输出)
@@ -182,6 +185,7 @@ wire [7:0]  da_play_w;   // [0x93] 回放样点 -> da_send
         .ifft_hi     (ifft_hi_w   ),
         .play_set    (play_set_w  ),   // [0x93] IFFT 结果回放
         .play_sel    (play_en_w   ),
+        .dbg_read    (dbg_read_w  ),   // [0x94] 状态回读
         .sf_run      (sf_run_w    ),
         .sweep_en    (sweep_en_w  ),
         .cal_kn      (cal_kn_w    ),
@@ -416,7 +420,10 @@ wire [7:0]  da_play_w;   // [0x93] 回放样点 -> da_send
         .spec_we  (spec_we_w ),
         .spec_waddr(spec_waddr_w),
         .spec_wdata(spec_wdata_w),
-        .busy     (sf_busy_w )
+        .busy     (sf_busy_w ),
+        .dbg_rd1 (dbg_rd1_w),   // [10-17] 0x94 状态回读
+        .dbg_rd2 (dbg_rd2_w),
+        .dbg_rd3 (dbg_rd3_w)
     );
     self_fft_report u_sfrpt (
         .clk      (sys_clk   ),
@@ -429,7 +436,12 @@ wire [7:0]  da_play_w;   // [0x93] 回放样点 -> da_send
         .fft_act  (fft_act   ),
         .wav_act  (wav_act | spec_act_w),     // 谱帧发送期间也让路
         .uart_txd (sf_txd    ),
-        .sf_active(sf_act_w  )
+        .sf_active(sf_act_w  ),
+        // [10-17] 0x94 状态回读
+        .dbg_req  (dbg_read_w),
+        .dbg_v1   (dbg_rd1_w ),
+        .dbg_v2   (dbg_rd2_w ),
+        .dbg_v3   (dbg_rd3_w )
     );
 
     // ---- 3.13 [0x8E] 幅度谱帧: 缓存 + 发送 (2026-09-30 新增) ----
