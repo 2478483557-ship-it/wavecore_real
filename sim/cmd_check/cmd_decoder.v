@@ -143,6 +143,15 @@ module cmd_decoder (
             spec_req    <= 1'b0;
             tb_set      <= 1'b0;
             pre_set     <= 1'b0;
+            // [10-17 修复·关键] 下面这几个脉冲也必须每拍默认清零 —— 
+            //   原来只有复位分支赋过 0, 正常工作时不复位就直接卡在 1,
+            //   于是 dbg_read 一被 0x94 置 1 **就再也回不到 0**, 上报模块被无限重触发,
+            //   串口一直刷 SF/S2/S3(实机现象)。
+            win_set     <= 1'b0;
+            ovl_set     <= 1'b0;
+            ifft_set    <= 1'b0;
+            play_set    <= 1'b0;
+            dbg_read    <= 1'b0;
             if (rx_done) begin
                 case (st)
                     ST_H1: begin
