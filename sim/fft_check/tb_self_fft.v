@@ -626,6 +626,61 @@ module tb_self_fft;
             play_en = 1'b0;
         end
 
+        $display("-------- [10-17] 二分测试: 只开回放, 不跑任何 FFT --------");
+        begin : onlyplay_t
+            integer i, nz, mn, mx, v;
+            sel = 3'd3; ovl_en = 1'b0; mask_lo = 10'd98; mask_hi = 10'd102;
+            // 复位后直接开回放, 一次 run / inv_run 都不发
+            play_en = 1'b1;
+            repeat (600) @(posedge clk);
+            $display("  只开回放: st=%0d(S_PLAY=19) cap_on=%0d inv_mode=%0d",
+                     u_dut.st, u_dut.cap_on, u_dut.inv_mode);
+            chk("只开回放也能进 S_PLAY", u_dut.st == 5'd19);
+            nz = 0; mn = 999; mx = -1;
+            for (i = 0; i < 3000; i = i + 1) begin
+                @(posedge clk);
+                v = da_play;
+                if (v != 128) nz = nz + 1;
+                if (v < mn) mn = v;
+                if (v > mx) mx = v;
+            end
+            $display("  只开回放: da_play 非中值 %0d/3000  范围 [%0d,%0d]", nz, mn, mx);
+            chk("只开回放时 DA 也在动", nz > 100);
+            play_en = 1'b0;
+            repeat (200) @(posedge clk);
+        end
+
+        $display("-------- [10-17] 先开回放、再发 0x92 的顺序 --------");
+        begin : playfirst_t
+            integer i, nz, mn, mx, v;
+            sel = 3'd3; ovl_en = 1'b0; play_en = 1'b0;
+            mask_lo = 10'd98; mask_hi = 10'd102; 
+            // 正向 FFT
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            @(posedge res_done); repeat (60) @(posedge clk);
+            // ★ 先开回放(此时放的是频谱 -> "毛刺")
+            play_en = 1'b1;
+            repeat (600) @(posedge clk);
+            $display("  先开回放: st=%0d", u_dut.st);
+            // ★ 回放中再发 0x92 —— 这一步以前会被 S_PLAY 挡住, 永远不执行
+            @(negedge clk); inv_run = 1'b1; @(negedge clk); inv_run = 1'b0;
+            repeat (120000) @(posedge clk);
+            $display("  回放中发 0x92 之后: st=%0d(S_PLAY=19) inv_done=%0d", u_dut.st, u_dut.inv_done);
+            chk("回放期间发的 0x92 能跑完反向变换", u_dut.inv_done === 1'b1);
+            chk("反向跑完自动回到回放态", u_dut.st == 5'd19);
+            nz = 0; mn = 999; mx = -1;
+            for (i = 0; i < 3000; i = i + 1) begin
+                @(posedge clk);
+                v = da_play;
+                if (v != 128) nz = nz + 1;
+                if (v < mn) mn = v;
+                if (v > mx) mx = v;
+            end
+            $display("  最终 da_play: 非中值 %0d/3000  范围 [%0d,%0d]", nz, mn, mx);
+            play_en = 1'b0;
+            repeat (200) @(posedge clk);
+        end
+
         $display("=====================================================");
         $display("RESULT: PASS=%0d  FAIL=%0d", n_pass, n_fail);
         if (n_fail == 0) $display("*** 全部通过 ***  (6 个场景 + 11 项 0x8E 幅度谱检查: A/B 严格, C 分不开, D 真双峰, E 非整数bin, F 高bin溢出)");

@@ -440,7 +440,15 @@ module self_fft_1024 #(
                 S_PLAY: begin
                     // addr 每 decim_use 拍才变 -> 读延迟被吃掉, dout 在采样当拍就是 mem[play_idx]
                     addr <= play_idx;
-                    if (!play_en) begin                 // 取消回放 -> 回空闲
+                    // [10-17 修复·关键] 回放期间来了 0x92(反向变换请求) 必须**让位**。
+                    //   根因: 反向变换的触发条件要求 st==S_CAP, 而回放时 FSM 停在 S_PLAY,
+                    //   于是"先开回放、再发 0x92"这个顺序下 **反向永远跑不起来**,
+                    //   DAC 放的是内存里原有的**频谱**数据(数值大, 大面积顶轨 + 零星跳动),
+                    //   实机表现就是"只有一些零零散散的毛刺"。
+                    if (inv_pend) begin
+                        st <= S_CAP;                    // 回空闲, 让反向变换去跑
+                    end
+                    else if (!play_en) begin            // 取消回放 -> 回空闲
                         st <= S_CAP;
                     end
                     else if (dcnt == decim_use - 32'd1) begin
