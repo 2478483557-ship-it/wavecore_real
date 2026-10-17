@@ -385,7 +385,15 @@ module self_fft_1024 #(
             else if (inv_pend && !inv_mode && st==S_CAP) begin
                 inv_mode <= 1'b1;  cap_on <= 1'b0;  st <= S_START;
             end
-            else if (play_en && inv_done && !inv_mode && !cap_on && st==S_CAP) begin
+            else if (play_en && !inv_mode && !cap_on && st==S_CAP) begin
+                // [10-17 诊断改动] 去掉了 inv_done 这个门。
+                //   实机现象: 开回放后 DA 恒为中值(ADC 回环测出 0Hz), 而仿真里同样的命令顺序是通的
+                //   —— 唯一还没排除的就是 "inv_done 没被置起来"。
+                //   去掉这个门之后:
+                //     · DA 开始动  -> 说明毛病就在 inv_done
+                //     · DA 还是死  -> 说明在 play_en_w / DAC 多路选择, 与 IFFT 无关
+                //   代价: 没跑过 IFFT 时开回放会放出一段"垃圾波形"(mem 里是频谱),
+                //         这是可见的、可接受的诊断行为。
                 // [10-17 修复·重要] 原来**只有**在反向变换跑完的那一拍 play_en 为 1 才进回放态。
                 //   上位机的自然顺序是"先 0x92 跑 IFFT, 再 0x93 开回放" —— 等 0x93 到时
                 //   反向早就跑完了, 于是**永远进不了回放, DAC 没有任何输出**(实机现象)。

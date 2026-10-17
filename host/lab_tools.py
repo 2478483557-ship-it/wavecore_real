@@ -222,9 +222,9 @@ def cmd_ifft(sp, f_main=1000, f_notch=5000):
     print("\n[4/5] 打开 DAC 回放（DDS 让出 DAC）")
     send(sp, P.command_play_ifft(True), "回放 开")
     time.sleep(0.1)
-    # 再补发一次 0x92, 保证"回放已在等"且反向确实跑过
-    send(sp, P.command_ifft_filter(lo, hi), "IFFT 掩膜(补发)")
-    time.sleep(0.4)
+    # [10-17] 去掉原来的"补发 0x92": 它会让 inv_pend 一直悬着,
+    #   关回放时又触发一次反向变换, 徒增混乱。
+    time.sleep(0.3)
 
     # ---- ⑤ 怎么看 ----
     print("\n[5/5] 现在用示波器看 DA 输出（板上的 DA 引脚）")
