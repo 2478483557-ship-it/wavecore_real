@@ -640,11 +640,17 @@ class WaveCoreApp:
         ttk.Button(controls, text="运行滤波", command=self.apply_ifft).grid(
             row=8, column=3, padx=4, pady=(6, 0)
         )
+        # [10-17 补] 停止频域滤波 / 恢复原始信号。
+        #   掩膜是**原地改写** mem 的, 跑过就回不去 —— 只能关回放 + 重采一帧。
+        self.ifft_stop_button = ttk.Button(
+            controls, text="恢复原始", command=self.stop_ifft
+        )
+        self.ifft_stop_button.grid(row=8, column=4, padx=4, pady=(6, 0))
         ttk.Checkbutton(
             controls, text="DAC 回放", variable=self.play_var, command=self.toggle_play
-        ).grid(row=8, column=4, columnspan=2, padx=4, pady=(6, 0), sticky="w")
+        ).grid(row=8, column=5, columnspan=2, padx=4, pady=(6, 0), sticky="w")
         ttk.Label(controls, textvariable=self.ifft_info_var).grid(
-            row=8, column=6, columnspan=3, padx=(12, 0), pady=(6, 0), sticky="w"
+            row=8, column=7, columnspan=2, padx=(12, 0), pady=(6, 0), sticky="w"
         )
 
         ttk.Label(
@@ -1190,6 +1196,27 @@ class WaveCoreApp:
             return
         self.overlap_info_var.set(
             "50% 重叠：帧间无信号空白、刷新率约翻倍" if on else "整帧采集（默认，与升级前一致）"
+        )
+
+    def stop_ifft(self):
+        """停止频域滤波，把信号恢复成未滤波状态。
+
+        为什么要单独一个按钮：掩膜是**原地改写**存储器的。0x92 跑完后
+        mem 里已经是"滤掉某频段"的时域结果，没法靠再发一条命令撤销。
+        唯一的恢复办法是：
+          ① 关回放(0x93=0) —— DDS 重新驱动 DAC，回放态也让出 FSM；
+          ② 重跑一次正向 FFT(0x8A) —— 重新采集，mem 换回原始数据。
+
+        副作用（要告诉用户）：重采集会重新取样，波形相位会变。
+        """
+        if self.play_var.get():
+            self.play_var.set(False)
+            if not self._send(command_play_ifft(False), "已关闭回放"):
+                return
+        if not self._send(command_run_self_fft(), "已重新采集（恢复原始频谱）"):
+            return
+        self.ifft_info_var.set(
+            "频域滤波已停止：回放关闭、重新采集原始数据（相位会变）"
         )
 
     def apply_ifft(self):
