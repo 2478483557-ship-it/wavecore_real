@@ -18,7 +18,21 @@ ls blk_mem_gen_0.v ila_0.v >/dev/null
 
 echo "[2/3] xvlog"
 rm -rf xsim.dir work
+# [10-17 修复] 原来是 "xvlog ... | tee log | tail -4" —— 管道让 set -e 只看最后一个命令(tail),
+#   xvlog 的失败会被**静默吞掉**。实测: cmd_decoder.v 有语法错(端口列表提前关闭),
+#   本脚本当时仍报"通过", 直到 Vivado 综合失败才暴露, 白跑一趟综合。必须显式判错。
 xvlog --relax *.v 2>&1 | tee xvlog.log | tail -4
+if grep -qiE "ERROR" xvlog.log; then
+  echo "[失败] xvlog 报错, 见 xvlog.log :"
+  grep -iE "ERROR" xvlog.log | head -5
+  exit 1
+fi
+# 精化阶段同样显式判错(管道也会吞掉 xelab 的失败)
+if grep -qiE "^ERROR" xelab.log; then
+  echo "[失败] xelab 报错, 见 xelab.log :"
+  grep -iE "^ERROR" xelab.log | head -5
+  exit 1
+fi
 
 echo "[3/3] xelab board_top"
 xelab board_top -s board_elab -timescale 1ns/1ps 2>&1 | tee xelab.log | tail -8

@@ -49,8 +49,10 @@ module cmd_decoder (
     output reg         pre_set,    // [0x8F] 预触发档位生效(1拍脉冲)
     output reg  [1:0]  pre_sel,    // [0x8F] 预触发档: 0=0% 1=25% 2=50% 3=75%
     output reg         win_set,    // [0x90] 窗函数档位生效(1拍脉冲)  [10-16 新增]
-    output reg  [1:0]  win_sel     // [0x90] 窗函数: 0=矩形 1=Hann 2=Blackman  [10-16 新增]
-),
+    output reg  [1:0]  win_sel,    // [0x90] 窗函数: 0=矩形 1=Hann 2=Blackman  [10-16 新增]
+    // [10-17 修复] 原此处多了一个 ")," —— 端口列表被提前关闭, 后面 6 个端口全成悬空代码。
+    //   后果: xvlog 报 syntax error -> Vivado 把 cmd_decoder.v 自动禁用 -> 综合找不到模块。
+    //   教训: 改端口后必须单独编译本文件, 不能只靠"别处仿真过了"。
     output reg         ovl_set,    // [0x91] 帧重叠档位生效(1拍脉冲)  [10-16]
     output reg         ovl_sel,    // [0x91] 50%帧重叠: 0=关(默认) 1=开  [10-16]
     output reg         ifft_set,   // [0x92] IFFT 触发(1拍脉冲)  [10-16]
@@ -58,6 +60,7 @@ module cmd_decoder (
     output reg  [9:0]  ifft_hi,    // [0x92] 掩膜高 bin(含)
     output reg         play_set,   // [0x93] 回放档位生效(1拍脉冲)  [10-16]
     output reg         play_sel    // [0x93] IFFT 结果回放: 0=关 1=DAC 回放
+);
 
     // 换算常量: round(2^32/5e7 x 2^24)
     localparam [31:0] M = 32'd1_441_150_920;
