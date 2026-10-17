@@ -172,6 +172,13 @@ module self_fft_1024 #(
     reg  signed [19:0] play_c;
     reg  inv_done;   // 反向变换是否已跑完过(mem 里现在是不是"时域波形")
     reg  inv_pend;   // inv_run 只有 1 拍; 若 FSM 当时不在 S_CAP 就丢了 -> 先锁存
+    // [10-17 诊断] LED3 平时慢闪(心跳), 收到 0x92 后变常亮。
+    //   这样一次就能分清三种情况: 闪=命令没到 / 常亮=命令到了 / 全灭=灯或引脚坏了
+    reg  [25:0] blink_cnt;
+    always @(posedge clk or negedge rst_n)
+        if (!rst_n) blink_cnt <= 26'd0;
+        else        blink_cnt <= blink_cnt + 26'd1;
+    wire blink = blink_cnt[24];          // 50MHz/2^25 ~= 0.67 Hz
     reg  inv_seen;   // [10-17 诊断] 0x92 **到过没有**的粘滞标志(只复位清零)
                      //   用处: 区分"命令没到"和"到了但没跑完"这两件完全不同的事
 
@@ -180,7 +187,7 @@ module self_fft_1024 #(
     // 幅度换算: 往返衰减 1/N(IFFT 输出约 +-24), 8bit DAC 居中 128 需要 +-128
     //   -> 增益取 5 倍((y<<2)+y), 再按 +-127 饱和, 最后加 128 转成偏置二进制。
     // [10-17 诊断] 回放链路 4 个关键点, 对应 LED0..LED3
-    assign dbg_play = { inv_seen | inv_done,         // LED3: 0x92 到过没有(粘滞)
+    assign dbg_play = { inv_seen | inv_done | blink, // LED3: 闪=没收到0x92 / 常亮=收到了
                         (st == S_PLAY),              // LED2: 有没有进回放态
                         (da_play != 8'd128),         // LED1: 有没有真产生样点(会闪)
                         play_en };                   // LED0: 0x93 命令到没到
