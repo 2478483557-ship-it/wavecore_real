@@ -158,6 +158,19 @@ module tb_self_fft;
             for (fi = 0; fi < 1024; fi = fi + 1) fsnap[fi] <= fmir[fi];
     end
 
+    //======== [10-17] 回放波形精确捕获: 只在 play_idx 变化时采一次 ========
+    //   原来用 repeat(1000) 采样, 与 play_idx 的实际更新率不同步(实测慢 8 倍),
+    //   采到大量重复点 -> 频谱被"零阶保持"污染成 2 的幂次 bin, 误判成乱序。
+    reg [9:0] pi_d = 10'd0;
+    integer   wave_fd = 0;
+    reg       wave_en = 1'b0;
+    always @(posedge clk) begin
+        pi_d <= u_dut.play_idx;
+        if (wave_en && play_en && (u_dut.play_idx != pi_d))
+            $fdisplay(wave_fd, "%0d %0d %0d %0d", u_dut.play_idx, u_dut.addr,
+                      $signed(u_dut.dout[31:16]), da_play);
+    end
+
     //======== 激励: 1024 点查表, 每拍推进一格(与 DUT 采样严格同拍) ========
     reg [9:0] ridx = 10'd0;
     reg [2:0] sel  = 3'd0;                       // 0=sq 1=sin 2=dual22 3=dual100 4=sin20p5 5=sin400(高bin)
@@ -778,47 +791,23 @@ module tb_self_fft;
             $display("  已写出 ifft_dump.txt (1024 点)");
         end
 
-        $display("-------- [10-17] 逆窗补偿后: 回放包络是否平坦 --------");
-        begin : env_t
-            integer k, pt, segidx, fd;
-            integer smin [0:9];
-            integer smax [0:9];
+        $display("-------- [10-17] dump 回放波形 da_play 供测频分析 --------");
+        begin : wave_t
+            integer k, fd;
             sel = 3'd3; ovl_en = 1'b0; play_en = 1'b0;
             mask_lo = 10'd96; mask_hi = 10'd108;
             @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
             @(posedge res_done); repeat (60) @(posedge clk);
             @(negedge clk); inv_run = 1'b1; @(negedge clk); inv_run = 1'b0;
             @(posedge res_done); repeat (60) @(posedge clk);
-            for (k = 0; k < 10; k = k + 1) begin smin[k] = 999; smax[k] = -999; end
             play_en = 1'b1;
-            repeat (400) @(posedge clk);        // 等进入 S_PLAY
-            fd = $fopen("play_dump.txt", "w");
-            // 采完整一圈: 1024 点 x decim(=1000) 拍
-            for (k = 0; k < 1024; k = k + 1) begin
-                repeat (1000) @(posedge clk);
-                $fdisplay(fd, "%0d", da_play);
-                segidx = k / 102;                  // 10 段
-                if (segidx > 9) segidx = 9;
-                if ($signed({1'b0,da_play}) < smin[segidx]) smin[segidx] = $signed({1'b0,da_play});
-                if ($signed({1'b0,da_play}) > smax[segidx]) smax[segidx] = $signed({1'b0,da_play});
-            end
-            $fclose(fd);
-            $display("  十段的峰峰值:");
-            begin : chk_env
-                integer gmin, gmax;
-                gmin = 99999; gmax = -99999;
-                for (k = 0; k < 10; k = k + 1) begin
-                    $display("    段%0d: %0d ~ %0d  峰峰 %0d", k, smin[k], smax[k], smax[k]-smin[k]);
-                    if (smax[k]-smin[k] < gmin) gmin = smax[k]-smin[k];
-                    if (smax[k]-smin[k] > gmax) gmax = smax[k]-smin[k];
-                end
-                $display("  包络: 最小 %0d 最大 %0d -> 起伏 %0d%%", gmin, gmax,
-                         (gmax-gmin)*100/(gmax == 0 ? 1 : gmax));
-                // [10-17] 逆窗补偿的验收: 各段峰峰值应基本一致。
-                //   补偿前两端衰减到 47%(起伏 >50%), 补偿后应在 20% 以内。
-                chk("逆窗补偿后包络平坦(起伏 < 20%)",
-                    (gmax > 0) && ((gmax-gmin)*100/gmax < 20));
-            end
+            repeat (400) @(posedge clk);
+            wave_fd = $fopen("play_wave.txt", "w");
+            wave_en = 1'b1;
+            repeat (1200000) @(posedge clk);   // 覆盖完整一圈(1024 点 x decim)
+            wave_en = 1'b0;
+            $fclose(wave_fd);
+            $display("  已写出 play_wave.txt (按 play_idx 变化逐点)");
             play_en = 1'b0;
             repeat (300) @(posedge clk);
         end

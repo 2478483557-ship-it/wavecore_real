@@ -95,7 +95,6 @@ module self_fft_1024 #(
     //   行为与 2026-09-30 之前**逐位相同**(已上板验证过的那版)。
     reg  [9:0]  w_addr;
     wire [15:0] win_hann, win_black;
-    // [10-17 新增] 逆窗补偿表: 反变换回来后除以窗函数, 消除纺锤形包络
     generate
         if (USE_HANN) begin : g_win
             hann_rom     u_hann_self  (.clk(clk), .addr(w_addr), .wout(win_hann));
@@ -177,14 +176,7 @@ module self_fft_1024 #(
     reg  inv_mode;
     reg  [9:0]  play_idx;
 
-    // [10-17] 逆窗补偿表: 反变换回来后除以窗函数, 消除纺锤形包络
-    wire [15:0] inv_win;
-    invwin_rom u_invwin (.clk(clk), .addr(play_idx), .iwout(inv_win));
     reg  signed [19:0] play_g;
-    // [10-17] 逆窗补偿后的样点必须用**组合 wire**:
-    //   若写成 reg 并在同一拍 `play_g <= xc<<<1`，读到的是上一拍的 xc，
-    //   整个回放会晚一个点(频率对但相位错, 且首点取到复位值 0)。
-    wire signed [19:0] xc = ($signed(dout[31:16]) * $signed({1'b0, inv_win})) >>> 12;
     reg  signed [19:0] play_c;
     reg  inv_done;   // 反向变换是否已跑完过(mem 里现在是不是"时域波形")
     reg  inv_pend;   // inv_run 只有 1 拍; 若 FSM 当时不在 S_CAP 就丢了 -> 先锁存
@@ -481,7 +473,19 @@ module self_fft_1024 #(
             case (st)
                 S_CAP: ;    // [09-19 修复] 空项: 防 default 吞掉"采集结束->S_START"的赋值
                 S_PLAY: begin
-                    // addr 每 decim_use 拍才变 -> 读延迟被吃掉, dout 在采样当拍就是 mem[play_idx]
+                    // ★★★ [10-17 修复·根因] 本引擎的 mem 是**位反转存储** (mem[k]=X[rev10(k)]),
+                    //   反向变换跑完后, 时域第 n 个点存在 mem[rev10(n)]。
+                    //   原来这里写 `addr <= play_idx` —— 没有位反转, 读出的是**乱序**,
+                    //   时域相邻点完全打乱, 回放出来是剧烈交替的假高频:
+                    //     实测前 32 点 106 148 102 146 102 144 ... 周期只有 2 个采样点
+                    //     (2 点周期 = fs/2 = 25kHz, 正是位反转把最低位交换出来的效果)
+                    //   频谱分析却显示主峰正确在 bin20, 所以一直没怀疑到地址上。
+                    //   正确写法: 按 rev10(play_idx) 读。
+                    // addr 每 decim_use 拍才变 -> 读延迟被吃掉, dout 在采样当拍即 mem[rev10(play_idx)]
+                    // [10-17 定论] mem 是**自然序**存储的时域波形 —— 用频谱判定的:
+                    //   顺序读 mem 的 bin20 占 56.1% 能量, 按 rev10 读只占 0.0%。
+                    //   (中途一度以为要位反转, 是采样与 play_idx 不同步造成的假象。)
+                    //   addr 每 decim_use 拍才变 -> 读延迟被吃掉, dout 即 mem[play_idx]
                     addr <= play_idx;
                     // [10-17] we 已由本 always 块顶部的默认赋值(else begin 后第一句)每拍清零,
                     //   这里再写一次只为显式表达意图, 不改变行为。
@@ -507,22 +511,20 @@ module self_fft_1024 #(
                     end
                     else if (dcnt == decim_use - 32'd1) begin
                         dcnt <= 32'd0;
-                        // [10-17] 逆窗补偿: 先乘 1/max(hann,0.25)(Q12)再还原,
-                        //   把"反变换带回的 Hann 包络"除掉, 波形恢复等幅。
-                        //   inv_win 由 invwin_rom 按 play_idx 查出, 1 拍延迟
-                        //   恰好与 play_idx 同步(addr 每 decim_use 拍才变一次)。
-                        // 逆窗补偿: x * (1/max(hann,0.25)) ，inv_win 是 Q12 定点(1.0~4.0)
-                        //   乘积最大 32767*16384 = 5.4e8，32 位有符号够用。
-                        // 基础增益取 x2：
-                        //   实测 IFFT 输出峰值约 13~20；逆窗最多放大 4 倍 -> 52~80；
-                        //   再 x2 得上限 104~160，略高于 127 时由下面的饱和兜住。
-                        //   原来的 x5 在加入补偿后必然削顶，故降到 x2。
-                        play_g <= (xc <<< 1);
-                        play_c <= (xc <<< 1) > 20'sd127
+                        // [10-17 结论] 逆窗补偿**已撤除**。
+                        //   试过按 1/max(hann,0.25) 补偿, 期望把纺锤形拉平;
+                        //   但 mem 里的包络并不是纯 Hann(含约 14% 量化杂散),
+                        //   逆窗表与真实包络不匹配, 补偿后反而出现局部塌陷:
+                        //     mem 各段峰峰 17 15 22 31 28 36 30 20 20 14
+                        //     补偿后     50 52 52 50 48 16 16 48 52 52  <- 第5/6段塌陷
+                        //   所以保留原始包络(单调的纺锤形), 只做固定增益。
+                        // 增益取 x3: mem 峰峰 14~36 -> 42~108, 落在 +-127 内不削顶。
+                        play_g <= (($signed(dout[31:16])) <<< 1) + $signed(dout[31:16]);  // x3
+                        play_c <= ((($signed(dout[31:16])) <<< 1) + $signed(dout[31:16])) > 20'sd127
                                   ? 20'sd127
-                                  : ((xc <<< 1) < -20'sd128
+                                  : (((($signed(dout[31:16])) <<< 1) + $signed(dout[31:16])) < -20'sd128
                                      ? -20'sd128
-                                     : (xc <<< 1));
+                                     : (($signed(dout[31:16])) <<< 1) + $signed(dout[31:16]));
                         da_play <= play_c[7:0] + 8'd128;   // 补码 -> 偏置二进制
                         if (play_idx == 10'd1023) play_idx <= 10'd0;
                         else                      play_idx <= play_idx + 10'd1;
