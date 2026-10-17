@@ -38,6 +38,7 @@ from protocol import (
     command_ifft_filter,     # [0x92] IFFT 频域滤波  [10-16]
     command_play_ifft,       # [0x93] IFFT 结果 DAC 回放  [10-16]
     command_read_nn,         # [0x95] 神经网络识别结果  [10-17]
+    command_set_ty_source,   # [0x96] 识别来源切换  [10-17]
 )
 
 
@@ -653,6 +654,16 @@ class WaveCoreApp:
             controls, text="NN 识别", command=self.read_nn
         )
         self.nn_button.grid(row=8, column=6, padx=4, pady=(6, 0))
+
+        # [10-17] 识别来源切换: TY 行用规则法还是神经网络
+        self.ty_src_var = tk.StringVar(value="规则法")
+        ttk.Combobox(
+            controls, textvariable=self.ty_src_var,
+            values=("规则法", "神经网络"), state="readonly", width=9,
+        ).grid(row=8, column=8, padx=(8, 0), pady=(6, 0))
+        ttk.Button(controls, text="切换", command=self.apply_ty_source).grid(
+            row=8, column=9, padx=4, pady=(6, 0)
+        )
         ttk.Checkbutton(
             controls, text="DAC 回放", variable=self.play_var, command=self.toggle_play
         ).grid(row=8, column=5, columnspan=1, padx=4, pady=(6, 0), sticky="w")
@@ -1203,6 +1214,20 @@ class WaveCoreApp:
             return
         self.overlap_info_var.set(
             "50% 重叠：帧间无信号空白、刷新率约翻倍" if on else "整帧采集（默认，与升级前一致）"
+        )
+
+    def apply_ty_source(self):
+        """切换 TY= 行的识别来源（0x96）。
+
+        两条通路并行运行，本命令只决定报哪一路。
+        编码已在硬件内部互换，所以 TY= 的语义在两种来源下一致。
+        这是本作品"同一功能两种实现"的直接对比手段。
+        """
+        use_nn = (self.ty_src_var.get() == "神经网络")
+        if not self._send(command_set_ty_source(use_nn), "已切换识别来源"):
+            return
+        self.ifft_info_var.set(
+            "TY 行改用%s —— 同一信号下可与另一路对照" % ("神经网络" if use_nn else "规则法")
         )
 
     def read_nn(self):

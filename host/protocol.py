@@ -216,6 +216,22 @@ def timebase_fs_hz(tier: int) -> float:
     return float(TIMEBASE_SAMPLE_RATES[tier])
 
 
+def command_set_ty_source(use_nn: bool) -> bytes:
+    """
+    生成 0x96 识别来源切换命令（协议 v1.22, 2026-10-17 新增）。
+
+    use_nn=False -> TY= 行用规则法（上电默认，与升级前一致）
+    use_nn=True  -> TY= 行用神经网络
+
+    两条通路始终并行运行，本命令只决定"报哪一路"。
+    硬件内部做了编码互换（规则法 0=方波/1=正弦，神经网络 0=正弦/1=方波），
+    所以 TY= 行的语义在两种来源下完全一致，上位机不需要区分。
+
+    用途：同一信号、同一套界面，发一条命令即可对比两路识别的输出。
+    """
+    return build_command(0x96, bytes([1 if use_nn else 0]))
+
+
 def command_read_nn() -> bytes:
     """
     生成 0x95 神经网络识别结果回读命令（协议 v1.22, 2026-10-17 新增）。

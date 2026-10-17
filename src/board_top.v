@@ -208,6 +208,14 @@ reg  [1:0]  nn_cls_r;      // 锁存最近一次的识别结果
 reg  [31:0] nf_dcnt;       // 独立的抽取计数(与 self_fft 的采集互不干扰)
 wire        nf_tick = (nf_dcnt >= tb_decim_w - 32'd1);
 wire        dbg_nn_w;      // 0x95 触发脉冲
+// [10-17] 识别来源切换: 0=TY 规则法(默认, 与升级前一致) 1=神经网络
+wire        ty_src_sel_w;
+wire [1:0]  ty_show;          // 最终送给 TY= 行的类别
+// 规则法原生编码: 0=方波 1=正弦 2=三角 3=其他
+// 神经网络编码:   0=正弦 1=方波 2=三角 3=其他
+//   -> 选 NN 时要把 0/1 互换, 才能让 TY= 行保持同一套语义
+wire [1:0]  nn_as_ty = {nn_cls_r[1], nn_cls_r[0] ^ nn_cls_r[1]};
+assign ty_show = ty_src_sel_w ? nn_as_ty : wave_type_w;
 // 0x94/0x95 共用同一条上报通路, 用这个标志选数据源
 reg         dbg_is_nn;
 reg         dbg_req_d;
@@ -254,6 +262,7 @@ reg         dbg_req_d;
         .play_sel    (play_en_w   ),
         .dbg_read    (dbg_read_w  ),   // [0x94] 状态回读
         .dbg_nn      (dbg_nn_w    ),   // [0x95] 神经网络结果
+        .ty_src_sel  (ty_src_sel_w),   // [0x96] 识别来源
         .sf_run      (sf_run_w    ),
         .sweep_en    (sweep_en_w  ),
         .cal_kn      (cal_kn_w    ),
@@ -463,7 +472,7 @@ reg         dbg_req_d;
         .clk      (sys_clk    ),
         .rst_n    (sys_rst_n  ),
         .ad_cap   (ad_cap     ),
-        .wave_type(wave_type_w)
+        .wave_type(ty_show)
     );
 
     // ---- 3.12 自研FFT(F4 复活版, 2026-09-17): 1024点 DIF, 0x8A 按需, SF= 行 ----

@@ -61,7 +61,8 @@ module cmd_decoder (
     output reg         play_set,   // [0x93] 回放档位生效(1拍脉冲)  [10-16]
     output reg         play_sel,   // [0x93] IFFT 结果回放: 0=关 1=DAC 回放
     output reg         dbg_read,   // [0x94] 状态回读触发(1拍脉冲)  [10-17]
-    output reg         dbg_nn      // [0x95] 神经网络结果回读(1拍脉冲)  [10-17]
+    output reg         dbg_nn,     // [0x95] 神经网络结果回读(1拍脉冲)  [10-17]
+    output reg         ty_src_sel  // [0x96] 识别来源: 0=TY规则法(默认) 1=神经网络
 );
 
     // 换算常量: round(2^32/5e7 x 2^24)
@@ -125,6 +126,8 @@ module cmd_decoder (
             play_sel    <= 1'b0;      // [10-16] 回放默认关, DDS 独占 DAC
             dbg_read    <= 1'b0;
             dbg_nn      <= 1'b0;
+            ty_src_sel  <= 1'b0;
+            ty_src_sel  <= 1'b0;
             spec_req    <= 1'b0;
             tb_set      <= 1'b0;
             pre_set     <= 1'b0;
@@ -241,6 +244,9 @@ module cmd_decoder (
                                 8'h91: begin             // [10-16] 50% 帧重叠: 0=关 1=开
                                     ovl_set <= 1'b1;
                                     ovl_sel <= pbuf[0][0];
+                                end
+                                8'h96: begin             // [10-17] 识别来源切换
+                                    ty_src_sel <= pbuf[0][0];
                                 end
                                 8'h95: begin             // [10-17] 神经网络识别结果回读
                                     dbg_nn <= 1'b1;
