@@ -198,20 +198,46 @@ def cmd_ifft(sp, f_main=1000, f_notch=5000):
     time.sleep(0.3)
     print("      理论 bin: 主音 %.1f / 干扰 %.1f" % (f_main / DF, f_notch / DF))
 
-    # ---- ② 正向 FFT ----
-    print("\n[2/5] 跑一次自研 FFT（反向变换作用在这一帧上，必须先跑）")
+    # ---- ② 正向 FFT + ★双音自检 ----
+    print("\n[2/5] 跑一次自研 FFT，并检查**双音真的存在**")
     send(sp, P.command_run_self_fft(), "跑一次 FFT")
-    time.sleep(0.15)
+    time.sleep(0.20)
     s = grab_spec(sp)
     if not s:
         print("  [失败] 读不到谱帧, 停在这里")
         return
-    pk, top, floor = spec_stats(s)
-    want = int(round(f_notch / DF))
-    print("  谱峰 bin=%d (%.0f Hz)  理论干扰 bin=%d" % (pk, pk * DF, want))
+
+    # [10-17] 关键自检: 掩膜只能掩掉"多余的那一个音"。
+    #   如果频谱里只有一根柱子(单音), 掩掉它之后 IFFT 输出必然是 0,
+    #   DAC 只会输出中值直流 —— 看起来像"回放坏了", 其实是对的。
+    b_main = int(round(f_main / DF))
+    b_notch = int(round(f_notch / DF))
+    def peak_near(b, w=4):
+        lo, hi = max(0, b - w), min(NBIN - 1, b + w)
+        return max(range(lo, hi + 1), key=lambda k: s[k])
+    pm, pn = peak_near(b_main), peak_near(b_notch)
+    floor = statistics.mean([s[k] for k in range(NBIN) if s[k] > 0]) or 1
+    has_main = s[pm] > floor * 3
+    has_notch = s[pn] > floor * 3
+    print("  主音 %d Hz (bin %d): 码值 %d  %s" % (f_main, pm, s[pm], "有" if has_main else "**没有**"))
+    print("  干扰 %d Hz (bin %d): 码值 %d  %s" % (f_notch, pn, s[pn], "有" if has_notch else "**没有**"))
+
+    if not has_notch:
+        print("\n  >>> 停: 没有检测到 %d Hz 这个成分。" % f_notch)
+        print("      掩膜只能掩掉'多余的那一个音'; 若频谱里本来就没有它,")
+        print("      掩掉唯一的音之后 IFFT 输出必然是 0, DAC 只会输出中值(直流)。")
+        print("      先确认双音:");
+        print("        0x85 主频 = %d Hz" % f_main)
+        print("        0x87 第二频 = %d Hz" % f_notch)
+        print("      再跑 0x8A, SF/S2 应分别报出这两个频率。")
+        return
+    if not has_main:
+        print("\n  >>> 停: 主音 %d Hz 不存在, 掩掉干扰后就没有任何成分了。" % f_main)
+        return
+    print("  OK: 两个音都在, 可以掩膜")
 
     # ---- ③ 掩膜 ----
-    lo, hi = max(0, want - 2), min(NBIN - 1, want + 2)
+    lo, hi = max(0, pn - 2), min(NBIN - 1, pn + 2)
     print("\n[3/5] 掩掉干扰所在的一带（**要给带宽**, 加窗会把单音展宽成 ±1 bin）")
     print("      掩膜 bin %d..%d  (%.0f ~ %.0f Hz)" % (lo, hi, lo * DF, hi * DF))
     send(sp, P.command_ifft_filter(lo, hi), "IFFT 掩膜")

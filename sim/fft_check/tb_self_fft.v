@@ -681,6 +681,48 @@ module tb_self_fft;
             repeat (200) @(posedge clk);
         end
 
+        $display("-------- [10-17] 回放期间 dout 到底读到什么 --------");
+        begin : doutprobe_t
+            integer k, nz, mx, dmax, dmin;
+            reg signed [15:0] dv;
+            sel = 3'd3; ovl_en = 1'b0; play_en = 1'b0;
+            mask_lo = 10'd98; mask_hi = 10'd102;
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            @(posedge res_done); repeat (60) @(posedge clk);
+            @(negedge clk); inv_run = 1'b1; @(negedge clk); inv_run = 1'b0;
+            @(posedge res_done); repeat (60) @(posedge clk);
+            // 直接逐个地址读 mem, 看 dout 里有没有数据
+            nz = 0; mx = 0;
+            for (k = 0; k < 1024; k = k + 1) begin
+                @(negedge clk); force u_dut.addr = k[9:0];
+                @(negedge clk); @(negedge clk);
+                dv = $signed(u_dut.dout[31:16]);
+                if (dv != 0) nz = nz + 1;
+                if (dv > mx) mx = dv;
+                if (-dv > mx) mx = -dv;
+            end
+            release u_dut.addr;
+            $display("  IFFT 后直接读 mem: 实部非零 %0d/1024, 峰值绝对值 %0d", nz, mx);
+            chk("IFFT 后 mem 实部有数据", nz > 500);
+            chk("IFFT 后 mem 峰值 > 2", mx > 2);
+            $display("  峰值 %0d -> 乘 5 = %0d -> 加到 128 上是否可见: %0d",
+                     mx, mx*5, (mx*5 >= 2));
+            // 再开回放, 看 da_play 真实分布
+            play_en = 1'b1;
+            repeat (800) @(posedge clk);
+            nz = 0; dmax = -999; dmin = 999;
+            for (k = 0; k < 4000; k = k + 1) begin
+                @(posedge clk);
+                if (da_play !== 8'd128) nz = nz + 1;
+                if ($signed({1'b0,da_play}) > dmax) dmax = $signed({1'b0,da_play});
+                if ($signed({1'b0,da_play}) < dmin) dmin = $signed({1'b0,da_play});
+            end
+            $display("  回放中 da_play: 非中值 %0d/4000, 范围 [%0d, %0d], st=%0d",
+                     nz, dmin, dmax, u_dut.st);
+            chk("回放期间 da_play 有变化", nz > 200);
+            play_en = 1'b0;
+        end
+
         $display("=====================================================");
         $display("RESULT: PASS=%0d  FAIL=%0d", n_pass, n_fail);
         if (n_fail == 0) $display("*** 全部通过 ***  (6 个场景 + 11 项 0x8E 幅度谱检查: A/B 严格, C 分不开, D 真双峰, E 非整数bin, F 高bin溢出)");
