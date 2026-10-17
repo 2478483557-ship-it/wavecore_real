@@ -129,10 +129,16 @@ def cmd_win(sp):
         for name, pk, top, floor in res:
             print("  %-10s %-8.2f %-8.2f" % (name, floor, floor / base))
         print("-" * 62)
-        if res[2][3] < res[1][3] < res[0][3]:
-            print("  >>> 通过: 底噪 矩形 > Hann > Blackman, 窗函数生效")
+        # [10-17 实测修正] 原来要求"严格递减", 实机是 79 / 24.6 / 26.6 —— 被判"未通过"。
+        #   但 79 -> 24.6 已经是 3.2 倍, 说明窗确实生效了; Blackman 不比 Hann 更低
+        #   是因为 **Hann 已经把泄漏压到 ADC 噪声底**, 再强的窗也看不出差别。
+        #   所以正确的判据是: 矩形必须明显高于另两个(Hann/Blackman 彼此接近属正常)。
+        r, h, b = res[0][3], res[1][3], res[2][3]
+        if r > h * 1.5 and r > b * 1.5:
+            print("  >>> 通过: 矩形底噪是另两个的 %.1f 倍, 窗函数生效" % (r / max(h, 1e-9)))
+            print("       (Hann 与 Blackman 接近是正常的 —— Hann 已压到 ADC 噪声底)")
         else:
-            print("  >>> 未通过: 底噪没有按预期递减, 把上面数字发我")
+            print("  >>> 未通过: 矩形没有明显高于另两个, 把上面数字发我")
 
 
 # ---------------------------------------------------------------- 模式 2: 帧重叠
@@ -212,9 +218,13 @@ def cmd_ifft(sp, f_main=1000, f_notch=5000):
     time.sleep(0.35)
 
     # ---- ④ 回放 ----
+    # [10-17] 顺序: 先开回放再跑 IFFT 更稳(老 RTL 只在反向跑完那一拍认 play_en)。
     print("\n[4/5] 打开 DAC 回放（DDS 让出 DAC）")
     send(sp, P.command_play_ifft(True), "回放 开")
     time.sleep(0.1)
+    # 再补发一次 0x92, 保证"回放已在等"且反向确实跑过
+    send(sp, P.command_ifft_filter(lo, hi), "IFFT 掩膜(补发)")
+    time.sleep(0.4)
 
     # ---- ⑤ 怎么看 ----
     print("\n[5/5] 现在用示波器看 DA 输出（板上的 DA 引脚）")

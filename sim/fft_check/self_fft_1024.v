@@ -172,6 +172,7 @@ module self_fft_1024 #(
     reg  [9:0]  play_idx;
     reg  signed [19:0] play_g;
     reg  signed [19:0] play_c;
+    reg  inv_done;   // 反向变换是否已跑完过(mem 里现在是不是"时域波形")
     reg  inv_pend;   // inv_run 只有 1 拍; 若 FSM 当时不在 S_CAP 就丢了 -> 先锁存
     always @(posedge clk or negedge rst_n)
         if (!rst_n)        inv_pend <= 1'b0;
@@ -347,7 +348,7 @@ module self_fft_1024 #(
             addr<=0; din<=0; we<=0; tw_addr<=0; w_addr<=0;
             stage<=0; base<=0; j<=0; half<=10'd512; nblk<=10'd1; blk<=0; i1<=0; i2<=0;
             first_run<=1'b1; pre_idx<=10'd0;      // [10-16] 50% 重叠: 复位后首帧采满
-            inv_mode<=1'b0; inv_pend<=1'b0; play_idx<=10'd0; play_g<=20'sd0; play_c<=20'sd0;
+            inv_mode<=1'b0; inv_pend<=1'b0; inv_done<=1'b0; play_idx<=10'd0; play_g<=20'sd0; play_c<=20'sd0;
             da_play<=8'd128;                     // [10-16] IFFT: 必须复位! 否则正向通路的
                                                   //   `inv_mode ? rev10(..) : ..` 地址选择会是 X
             ar<=0;ai<=0;br<=0;bi<=0;cr<=0;ci<=0;
@@ -368,6 +369,7 @@ module self_fft_1024 #(
                 run_l  <= 1'b0;
                 // [10-16] 50% 重叠: 除复位后第一帧外, 先预载上一帧保存的后半 512 点,
                 //   再只采 512 个新点 -> 新帧 = [旧512 | 新512]。
+                inv_done <= 1'b0;          // 重新采集 -> mem 里不再是时域波形, 禁止回放
                 if (ovl_en && !first_run) begin
                     pre_idx <= 10'd0;
                     st      <= S_PRE;
@@ -382,6 +384,13 @@ module self_fft_1024 #(
             end
             else if (inv_pend && !inv_mode && st==S_CAP) begin
                 inv_mode <= 1'b1;  cap_on <= 1'b0;  st <= S_START;
+            end
+            else if (play_en && inv_done && !inv_mode && !cap_on && st==S_CAP) begin
+                // [10-17 修复·重要] 原来**只有**在反向变换跑完的那一拍 play_en 为 1 才进回放态。
+                //   上位机的自然顺序是"先 0x92 跑 IFFT, 再 0x93 开回放" —— 等 0x93 到时
+                //   反向早就跑完了, 于是**永远进不了回放, DAC 没有任何输出**(实机现象)。
+                //   改成: 只要反向跑过(inv_done)、且现在空闲, 随时可以进回放。
+                play_idx <= 10'd0; dcnt <= 32'd0; st <= S_PLAY;
             end
             else if (cap_on && st==S_CAP) begin
                 cnt_cy <= cnt_cy + 24'd1;   // [调试] 采集拍数
@@ -520,7 +529,7 @@ module self_fft_1024 #(
                         else begin
                             blk <= 0; base <= 0;
                             if (stage==4'd9 && inv_mode) begin   // [10-16] 反向跑完
-                                inv_mode <= 1'b0;
+                                inv_mode <= 1'b0; inv_done <= 1'b1;
                                 if (play_en) begin              // 有回放请求 -> 进回放态
                                     play_idx <= 10'd0; dcnt <= 32'd0; st <= S_PLAY;
                                 end
