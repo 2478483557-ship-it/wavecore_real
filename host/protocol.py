@@ -216,6 +216,24 @@ def timebase_fs_hz(tier: int) -> float:
     return float(TIMEBASE_SAMPLE_RATES[tier])
 
 
+def command_read_nn() -> bytes:
+    """
+    生成 0x95 神经网络识别结果回读命令（协议 v1.22, 2026-10-17 新增）。
+
+    板载 6->16->4 全连接网络, 与规则法(TY 行)并行运行。
+    特征是连续统计的(每 1024 个降采样点出一次), 随时可读。
+
+    解码:
+        SF = 700000 + 类别     1=正弦 2=方波 3=三角 4=其他
+        S2 = f0 占空比 (Q15)
+        S3 = f2 峭度/3 (Q15)
+    例: SF=700002 表示识别为方波。
+
+    与 0x94 用 500000 前缀区分; 与真实频率(0~25000)也不冲突。
+    """
+    return build_command(0x95, b"")
+
+
 def command_read_status() -> bytes:
     """
     生成 0x94 状态回读命令（协议 v1.22, 2026-10-17 新增）。

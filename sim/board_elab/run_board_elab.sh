@@ -21,6 +21,8 @@ rm -rf xsim.dir work
 # [10-17 修复] 原来是 "xvlog ... | tee log | tail -4" —— 管道让 set -e 只看最后一个命令(tail),
 #   xvlog 的失败会被**静默吞掉**。实测: cmd_decoder.v 有语法错(端口列表提前关闭),
 #   本脚本当时仍报"通过", 直到 Vivado 综合失败才暴露, 白跑一趟综合。必须显式判错。
+cp -f ../../src/wave_feat.v .
+cp -f ../../src/wave_nn.v .
 xvlog --relax *.v 2>&1 | tee xvlog.log | tail -4
 if grep -qiE "ERROR" xvlog.log; then
   echo "[失败] xvlog 报错, 见 xvlog.log :"

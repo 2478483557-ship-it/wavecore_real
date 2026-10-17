@@ -4,10 +4,10 @@
 // 特征     : 与 hw_analysis/train_wave_nn.py 的 feats() 逐条对齐（94% 那版）
 //              pk = max|x|
 //              f0 = cnt(x>0)/1024                    -> Q15: cnt*32
-//              f1 = |mean(x)|/pk                     -> Q15: |Σx|*32/pk
-//              f2 = min(kurt/3, 1), kurt = m4/m2^2   -> Q15: Σx⁴*2^25/(3·(Σx²)²)
-//              f3 = min(rms/pk, 1)                   -> Q15: √(Σx²)*1024/pk
-//              f4 = min(mean|dx|/pk*2, 1)            -> Q15: Σ|dx|*64/pk
+//              f1 = |mean(x)|/pk                     -> Q15: |sumx|*32/pk
+//              f2 = min(kurt/3, 1), kurt = m4/m2^2   -> Q15: sumx^4*2^25/(3·(sumx^2)^2)
+//              f3 = min(rms/pk, 1)                   -> Q15: √(sumx^2)*1024/pk
+//              f4 = min(mean|dx|/pk*2, 1)            -> Q15: sum|dx|*64/pk
 //              f5 = 过零率/1024                       -> Q15: zc*32
 // 关键设计 : 只有 pk 需要除 -> 累加器全在 x 域做, 除法留到最后统一做;
 //            f2 里的 pk 会自然约掉, 一次 pk 都不用除。
@@ -37,10 +37,10 @@ module wave_feat (
 
     // ---- 累加器(位宽按最坏情况推) ----
     reg [10:0]        a_hi;           // count(x>0)      ≤1024      -> 11
-    reg signed [20:0] a_s;            // Σx              |≤|1024*128 -> 21
-    reg [26:0]        a_sq;           // Σx²             ≤16.8e6   -> 27
-    reg [39:0]        a_x4;           // Σx⁴             ≤2.7e11   -> 40 ← 最宽
-    reg [19:0]        a_sl;           // Σ|x[n]-x[n-1]|  ≤1024*255 -> 20
+    reg signed [20:0] a_s;            // sumx              |≤|1024*128 -> 21
+    reg [26:0]        a_sq;           // sumx^2             ≤16.8e6   -> 27
+    reg [39:0]        a_x4;           // sumx^4             ≤2.7e11   -> 40 ← 最宽
+    reg [19:0]        a_sl;           // sum|x[n]-x[n-1]|  ≤1024*255 -> 20
     reg [10:0]        a_zc;           // 过零次数        ≤1024      -> 11
 
     // [10-17 修复·关键] 取绝对值必须**先符号扩展成 9 位有符号再去负**。
@@ -93,13 +93,13 @@ module wave_feat (
     reg [3:0]  op_idx;
     reg        op_run;
     reg [15:0] r_sqrt;
-    // [10-17 修复] |Σx| 必须用**组合 wire**: 原来写成 reg 非阻塞赋值,
+    // [10-17 修复] |sumx| 必须用**组合 wire**: 原来写成 reg 非阻塞赋值,
     //   紧接着的 dv_n 读到的是旧值(复位值 0) -> f1 永远是 0。
     // [10-17 修复] {1'b0, a_s} 是**零扩展**, 不是符号扩展 —— 负数取绝对值会变成巨大正数
     //   (实测 a_s=-190 得到 131262)。正确做法: 先赋给 signed 变量自动符号扩展, 再取负。
     wire signed [21:0] a_s22  = a_s;                                  // 自动符号扩展
-    wire [21:0]        sx_abs = a_s22[21] ? (22'd0 - a_s22) : a_s22;  // |Σx|
-    reg [39:0] d4;                    // Σx⁴/Σx²
+    wire [21:0]        sx_abs = a_s22[21] ? (22'd0 - a_s22) : a_s22;  // |sumx|
+    reg [39:0] d4;                    // sumx^4/sumx^2
 
     wire busy   = dv_bsy | sq_bsy;
     wire dv_end = dv_bsy & (dv_i == 6'd39);
@@ -183,37 +183,37 @@ module wave_feat (
                             // ---- 启动第 op_idx 个操作 ----
                             op_run <= 1'b1;
                             case (op_idx)
-                                4'd0: begin   // ① f1 = |Σx|*32 / pk
+                                4'd0: begin   // ① f1 = |sumx|*32 / pk
                                     dv_n <= {18'd0, sx_abs} << 5;               // 18+22 = 40 位
                                     dv_nsh <= {18'd0, sx_abs} << 5;
                                     dv_d <= {17'd0, pk};
                                     dv_r <= 40'd0; dv_q <= 40'd0; dv_i <= 6'd0; dv_bsy <= 1'b1;
                                 end
-                                4'd1: begin   // ② f4 = Σ|dx|*64 / pk
+                                4'd1: begin   // ② f4 = sum|dx|*64 / pk
                                     dv_n <= {20'd0, a_sl} << 6;
                                     dv_nsh <= {20'd0, a_sl} << 6;
                                     dv_d <= {17'd0, pk};
                                     dv_r <= 40'd0; dv_q <= 40'd0; dv_i <= 6'd0; dv_bsy <= 1'b1;
                                 end
-                                4'd2: begin   // ③ 开方 √(Σx²)
+                                4'd2: begin   // ③ 开方 √(sumx^2)
                                     sq_n   <= {5'd0, a_sq};
                                     sq_res <= 32'd0;
                                     sq_bit <= 32'h4000_0000;   // 1<<30
                                     sq_i   <= 6'd0; sq_bsy <= 1'b1;
                                 end
-                                4'd3: begin   // ④ f3 = √(Σx²)*1024 / pk
+                                4'd3: begin   // ④ f3 = √(sumx^2)*1024 / pk
                                     dv_n <= {24'd0, sq_cap} << 10;
                                     dv_nsh <= {24'd0, sq_cap} << 10;
                                     dv_d <= {17'd0, pk};
                                     dv_r <= 40'd0; dv_q <= 40'd0; dv_i <= 6'd0; dv_bsy <= 1'b1;
                                 end
-                                4'd4: begin   // ⑤ d4 = Σx⁴ / Σx²
+                                4'd4: begin   // ⑤ d4 = sumx^4 / sumx^2
                                     dv_n <= a_x4;
                                     dv_nsh <= a_x4;
                                     dv_d <= {1'b0, a_sq[24:0]};                 // 26 位(a_sq≤16.8e6 < 2^25)
                                     dv_r <= 40'd0; dv_q <= 40'd0; dv_i <= 6'd0; dv_bsy <= 1'b1;
                                 end
-                                4'd5: begin   // ⑥ f2 = d4*2^25 / (3·Σx²)
+                                4'd5: begin   // ⑥ f2 = d4*2^25 / (3·sumx^2)
                                     dv_n <= d4 << 25;
                                     dv_nsh <= d4 << 25;
                                     dv_d <= (a_sq[24:0] * 3'd3);                // ≤50.4e6 < 2^26

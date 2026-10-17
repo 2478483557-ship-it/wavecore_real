@@ -143,7 +143,74 @@ wire        play_en_w;   // [0x93] 回放使能 -> self_fft_1024
 wire [7:0]  da_play_w;   // [0x93] 回放样点 -> da_send
 // [10-17] 0x94 状态回读: 三个 24 位值经 SF/S2/S3 三行发出
 wire [23:0] dbg_rd1_w, dbg_rd2_w, dbg_rd3_w;
+
+// ---- [10-17] 特征提取 + 神经网络推理（连续运行）----
+always @(posedge sys_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n) nf_dcnt <= 32'd0;
+    else if (nf_tick) nf_dcnt <= 32'd0;
+    else              nf_dcnt <= nf_dcnt + 32'd1;
+end
+
+wave_feat u_nnfeat (
+    .clk     (sys_clk   ),
+    .rst_n   (sys_rst_n ),
+    .start   (1'b1          ),   // 永久拉高 -> 采满一帧后自动重新开始
+    .din     (ad_cap ^ 8'h80),   // 偏移二进制 -> 补码
+    .din_valid(nf_tick  ),
+    .f0(nf_f0), .f1(nf_f1), .f2(nf_f2), .f3(nf_f3), .f4(nf_f4), .f5(nf_f5),
+    .done    (nf_done   ),
+    .dbg_st  (          ),
+    .dbg_op  (          )
+);
+
+wave_nn #(.SH1(14), .SH2(12)) u_nn (
+    .clk   (sys_clk ),
+    .rst_n (sys_rst_n),
+    .start (nf_done ),
+    .f0(nf_f0), .f1(nf_f1), .f2(nf_f2), .f3(nf_f3), .f4(nf_f4), .f5(nf_f5),
+    .cls   (nn_cls  ),
+    .done  (nn_done ),
+    .dbg_st(        )
+);
+
+always @(posedge sys_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n)              nn_cls_r <= 2'd3;
+    else if (nn_done)            nn_cls_r <= nn_cls;
+end
+
+// 0x95 的编码: 沿用 0x94 的三行, 换个前缀 700000 便于区分
+//   SF = 700000 + 类别(1..4)    类别: 1=正弦 2=方波 3=三角 4=其他
+//   S2 = f0 占空比 (Q15)        S3 = f2 峭度 (Q15)
+wire [23:0] nn_rd1 = 24'd700000 + {22'd0, nn_cls_r} + 24'd1;
+wire [23:0] nn_rd2 = {8'd0, nf_f0};
+wire [23:0] nn_rd3 = {8'd0, nf_f2};
+
+// 数据源选择: 0x95 的脉冲来得早, 用打一拍后的 dbg_req 触发, 此时 dbg_is_nn 已更新
+always @(posedge sys_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n)       dbg_is_nn <= 1'b0;
+    else if (dbg_nn_w)    dbg_is_nn <= 1'b1;
+    else if (dbg_read_w)  dbg_is_nn <= 1'b0;
+end
+always @(posedge sys_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n) dbg_req_d <= 1'b0;
+    else            dbg_req_d <= dbg_read_w | dbg_nn_w;
+end
+
+wire [23:0] dbg_v1 = dbg_is_nn ? nn_rd1 : dbg_rd1_w;
+wire [23:0] dbg_v2 = dbg_is_nn ? nn_rd2 : dbg_rd2_w;
+wire [23:0] dbg_v3 = dbg_is_nn ? nn_rd3 : dbg_rd3_w;
 wire        dbg_read_w;   // 0x94 触发脉冲
+// [10-17] 神经网络波形识别: 特征提取器 + 推理核, 连续统计
+wire [15:0] nf_f0, nf_f1, nf_f2, nf_f3, nf_f4, nf_f5;
+wire        nf_done, nn_done;
+wire [1:0]  nn_cls;
+reg  [1:0]  nn_cls_r;      // 锁存最近一次的识别结果
+reg  [31:0] nf_dcnt;       // 独立的抽取计数(与 self_fft 的采集互不干扰)
+wire        nf_tick = (nf_dcnt >= tb_decim_w - 32'd1);
+wire        dbg_nn_w;      // 0x95 触发脉冲
+// 0x94/0x95 共用同一条上报通路, 用这个标志选数据源
+reg         dbg_is_nn;
+reg         dbg_req_d;
 
     // ---- 0.7c [0x8E] 幅度谱帧相关线(同样必须先声明后使用; 下方 3.7/3.9 会用到) ----
     wire        spec_req_w;    // 0x8E 请求脉冲(cmd_decoder 输出)
@@ -186,6 +253,7 @@ wire        dbg_read_w;   // 0x94 触发脉冲
         .play_set    (play_set_w  ),   // [0x93] IFFT 结果回放
         .play_sel    (play_en_w   ),
         .dbg_read    (dbg_read_w  ),   // [0x94] 状态回读
+        .dbg_nn      (dbg_nn_w    ),   // [0x95] 神经网络结果
         .sf_run      (sf_run_w    ),
         .sweep_en    (sweep_en_w  ),
         .cal_kn      (cal_kn_w    ),
@@ -438,10 +506,10 @@ wire        dbg_read_w;   // 0x94 触发脉冲
         .uart_txd (sf_txd    ),
         .sf_active(sf_act_w  ),
         // [10-17] 0x94 状态回读
-        .dbg_req  (dbg_read_w),
-        .dbg_v1   (dbg_rd1_w ),
-        .dbg_v2   (dbg_rd2_w ),
-        .dbg_v3   (dbg_rd3_w )
+        .dbg_req  (dbg_req_d ),
+        .dbg_v1   (dbg_v1    ),
+        .dbg_v2   (dbg_v2    ),
+        .dbg_v3   (dbg_v3    )
     );
 
     // ---- 3.13 [0x8E] 幅度谱帧: 缓存 + 发送 (2026-09-30 新增) ----

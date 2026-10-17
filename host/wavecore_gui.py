@@ -37,6 +37,7 @@ from protocol import (
     command_set_overlap,     # [0x91] 帧重叠  [10-16]
     command_ifft_filter,     # [0x92] IFFT 频域滤波  [10-16]
     command_play_ifft,       # [0x93] IFFT 结果 DAC 回放  [10-16]
+    command_read_nn,         # [0x95] 神经网络识别结果  [10-17]
 )
 
 
@@ -646,6 +647,12 @@ class WaveCoreApp:
             controls, text="恢复原始", command=self.stop_ifft
         )
         self.ifft_stop_button.grid(row=8, column=4, padx=4, pady=(6, 0))
+
+        # [10-17] 神经网络识别: 发 0x95, 回 SF=70000X / S2=占空比 / S3=峭度
+        self.nn_button = ttk.Button(
+            controls, text="NN 识别", command=self.read_nn
+        )
+        self.nn_button.grid(row=8, column=6, padx=4, pady=(6, 0))
         ttk.Checkbutton(
             controls, text="DAC 回放", variable=self.play_var, command=self.toggle_play
         ).grid(row=8, column=5, columnspan=2, padx=4, pady=(6, 0), sticky="w")
@@ -1196,6 +1203,19 @@ class WaveCoreApp:
             return
         self.overlap_info_var.set(
             "50% 重叠：帧间无信号空白、刷新率约翻倍" if on else "整帧采集（默认，与升级前一致）"
+        )
+
+    def read_nn(self):
+        """读取神经网络识别结果（0x95）。
+
+        板上网络与规则法并行运行, 特征是连续统计的, 随时可读。
+        回三行: SF=700000+类别 / S2=占空比 / S3=峭度。
+        类别: 1=正弦 2=方波 3=三角 4=其他。
+        """
+        if not self._send(command_read_nn(), "已请求神经网络识别结果"):
+            return
+        self.ifft_info_var.set(
+            "NN: 看 SF 行 —— 700001=正弦 700002=方波 700003=三角 700004=其他"
         )
 
     def stop_ifft(self):
