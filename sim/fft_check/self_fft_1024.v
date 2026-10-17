@@ -28,6 +28,8 @@ module self_fft_1024 #(
     input  wire [9:0]  mask_hi,      // [0x92] 掩膜高 bin(含)
     input  wire        play_en,      // [0x93] 回放使能: 循环把 mem 里的时域结果送 DAC  (10-16 新增)
     output reg  [7:0]  da_play,      // [0x93] 送 AD9708 的 8bit 偏置二进制样点
+    output wire [3:0]  dbg_play,     // [10-17 诊断] {inv_done, 在S_PLAY, da_play在动, play_en}
+                                     //   直接送板上的 4 个 LED, 一眼看出回放卡在哪一环
     output reg  [23:0] res_freq,     // 峰值频率(Hz) = bin*50000/1024
     output reg  [23:0] res_f2,       // [调试] 第二峰
     output reg  [23:0] res_f3,       // [调试] 第三峰
@@ -165,15 +167,21 @@ module self_fft_1024 #(
     //   镜像必须一起掩: 实信号的谱共轭对称, 只掩一半会留下复数残留。
     // 增益: 每级 >>1 -> 往返衰减 1/N(见 model_ifft.py)。本版先保证算法正确。
     reg  inv_mode;
-    //======== [10-16] 回放通路(把 IFFT 结果送 DAC) ========
-    // IFFT 输出 = 时域波形, 就在 mem 里(存储序即时间序)。
-    // 幅度换算: 往返衰减 1/N(IFFT 输出约 +-24), 8bit DAC 居中 128 需要 +-128
-    //   -> 增益取 5 倍((y<<2)+y), 再按 +-127 饱和, 最后加 128 转成偏置二进制。
     reg  [9:0]  play_idx;
     reg  signed [19:0] play_g;
     reg  signed [19:0] play_c;
     reg  inv_done;   // 反向变换是否已跑完过(mem 里现在是不是"时域波形")
     reg  inv_pend;   // inv_run 只有 1 拍; 若 FSM 当时不在 S_CAP 就丢了 -> 先锁存
+
+    //======== [10-16] 回放通路(把 IFFT 结果送 DAC) ========
+    // IFFT 输出 = 时域波形, 就在 mem 里(存储序即时间序)。
+    // 幅度换算: 往返衰减 1/N(IFFT 输出约 +-24), 8bit DAC 居中 128 需要 +-128
+    //   -> 增益取 5 倍((y<<2)+y), 再按 +-127 饱和, 最后加 128 转成偏置二进制。
+    // [10-17 诊断] 回放链路 4 个关键点, 对应 LED0..LED3
+    assign dbg_play = { inv_done,                    // LED3: 反向变换跑过没有
+                        (st == S_PLAY),              // LED2: 有没有进回放态
+                        (da_play != 8'd128),         // LED1: 有没有真产生样点(会闪)
+                        play_en };                   // LED0: 0x93 命令到没到
     always @(posedge clk or negedge rst_n)
         if (!rst_n)        inv_pend <= 1'b0;
         else if (inv_run)  inv_pend <= 1'b1;
@@ -445,8 +453,11 @@ module self_fft_1024 #(
                     //   于是"先开回放、再发 0x92"这个顺序下 **反向永远跑不起来**,
                     //   DAC 放的是内存里原有的**频谱**数据(数值大, 大面积顶轨 + 零星跳动),
                     //   实机表现就是"只有一些零零散散的毛刺"。
-                    if (inv_pend) begin
-                        st <= S_CAP;                    // 回空闲, 让反向变换去跑
+                    if (inv_pend || run_l) begin
+                        // [10-17 补] run_l 也要让位: 回放期间发 0x8A/0x8E 会被卡住
+                        //   (采集同样要求 st==S_CAP), 于是内存里一直是旧数据,
+                        //   放出来的自然不是波形。这一条和 inv_pend 是同一类问题。
+                        st <= S_CAP;                    // 回空闲, 让变换/采集去跑
                     end
                     else if (!play_en) begin            // 取消回放 -> 回空闲
                         st <= S_CAP;
