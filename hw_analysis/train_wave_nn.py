@@ -35,7 +35,10 @@ def feats(x):
     mean_abs = float(np.mean(np.abs(xn))) + 1e-9
     # [10-16] 原用 "波形因数"(rms/mean_abs): 正弦 1.11 vs 三角 1.15 —— 几乎无区分度, 弃用。
     #   改用**峭度**(四阶矩/二阶矩^2): 正弦 1.5 / 方波 1.0 / 三角 1.8 -> 区分度大得多。
-    m4 = float(np.mean((xn - xn.mean()) ** 4))
+    # [10-17] 改成**不减均值**的峭度, 与 RTL 口径对齐 ——
+    #   RTL 单遍扫描拿不到全局均值, 只能算 Σx⁴。实测两者在 duty≠50% 的方波上
+    #   差很多（kurt 1.243 vs 1.003）, 因此必须统一口径, 否则模型与硬件不一致。
+    m4 = float(np.mean(xn ** 4))
     kurt = m4 / (rms ** 4 + 1e-9)
     form = min(kurt / 3.0, 1.0)
     crest = min(rms / pk, 1.0)                      # 1/峰值因数
