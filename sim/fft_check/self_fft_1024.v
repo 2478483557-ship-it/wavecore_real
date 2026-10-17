@@ -28,8 +28,6 @@ module self_fft_1024 #(
     input  wire [9:0]  mask_hi,      // [0x92] 掩膜高 bin(含)
     input  wire        play_en,      // [0x93] 回放使能: 循环把 mem 里的时域结果送 DAC  (10-16 新增)
     output reg  [7:0]  da_play,      // [0x93] 送 AD9708 的 8bit 偏置二进制样点
-    output wire [3:0]  dbg_play,     // [10-17 诊断] {inv_done, 在S_PLAY, da_play在动, play_en}
-                                     //   直接送板上的 4 个 LED, 一眼看出回放卡在哪一环
     output reg  [23:0] res_freq,     // 峰值频率(Hz) = bin*50000/1024
     output reg  [23:0] res_f2,       // [调试] 第二峰
     output reg  [23:0] res_f3,       // [调试] 第三峰
@@ -172,33 +170,16 @@ module self_fft_1024 #(
     reg  signed [19:0] play_c;
     reg  inv_done;   // 反向变换是否已跑完过(mem 里现在是不是"时域波形")
     reg  inv_pend;   // inv_run 只有 1 拍; 若 FSM 当时不在 S_CAP 就丢了 -> 先锁存
-    // [10-17 诊断] LED3 平时慢闪(心跳), 收到 0x92 后变常亮。
-    //   这样一次就能分清三种情况: 闪=命令没到 / 常亮=命令到了 / 全灭=灯或引脚坏了
-    reg  [25:0] blink_cnt;
-    always @(posedge clk or negedge rst_n)
-        if (!rst_n) blink_cnt <= 26'd0;
-        else        blink_cnt <= blink_cnt + 26'd1;
-    wire blink = blink_cnt[24];          // 50MHz/2^25 ~= 0.67 Hz
-    reg  inv_seen;   // [10-17 诊断] 0x92 **到过没有**的粘滞标志(只复位清零)
-                     //   用处: 区分"命令没到"和"到了但没跑完"这两件完全不同的事
 
     //======== [10-16] 回放通路(把 IFFT 结果送 DAC) ========
     // IFFT 输出 = 时域波形, 就在 mem 里(存储序即时间序)。
     // 幅度换算: 往返衰减 1/N(IFFT 输出约 +-24), 8bit DAC 居中 128 需要 +-128
     //   -> 增益取 5 倍((y<<2)+y), 再按 +-127 饱和, 最后加 128 转成偏置二进制。
-    // [10-17 诊断] 回放链路 4 个关键点, 对应 LED0..LED3
-    assign dbg_play = { inv_seen | inv_done | blink, // LED3: 闪=没收到0x92 / 常亮=收到了
-                        (st == S_PLAY),              // LED2: 有没有进回放态
-                        (da_play != 8'd128),         // LED1: 有没有真产生样点(会闪)
-                        play_en };                   // LED0: 0x93 命令到没到
+// LED0: 0x93 命令到没到
     always @(posedge clk or negedge rst_n)
         if (!rst_n)        inv_pend <= 1'b0;
         else if (inv_run)  inv_pend <= 1'b1;
         else if (inv_mode) inv_pend <= 1'b0;
-    // 粘滞: 0x92 到过就一直亮着, 只有复位才清
-    always @(posedge clk or negedge rst_n)
-        if (!rst_n)       inv_seen <= 1'b0;
-        else if (inv_run) inv_seen <= 1'b1;
     function in_mask;
         input [9:0] b;
         begin
@@ -369,7 +350,7 @@ module self_fft_1024 #(
             addr<=0; din<=0; we<=0; tw_addr<=0; w_addr<=0;
             stage<=0; base<=0; j<=0; half<=10'd512; nblk<=10'd1; blk<=0; i1<=0; i2<=0;
             first_run<=1'b1; pre_idx<=10'd0;      // [10-16] 50% 重叠: 复位后首帧采满
-            // [10-17 修复·根因] 这里**不能**再赋 inv_pend / inv_seen —— 它们各自有自己的
+            // [10-17 修复·根因] 这里**不能**再赋 inv_pend —— 它有自己的
             //   专属 always 块做复位(见上方)。同一个 reg 被两个 always 驱动 = 多驱动,
             //   综合后互相打架, 实测表现为**恒为 0**, 于是 0x92 的请求永远进不来,
             //   反向变换从设计之初在板上就一次也没跑过。

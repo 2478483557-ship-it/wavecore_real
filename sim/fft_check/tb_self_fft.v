@@ -88,8 +88,8 @@ module tb_self_fft;
     reg        inv_run  = 1'b0;          // [0x92] IFFT 反向通行脉冲
     reg [9:0]  mask_lo  = 10'd0;         // [0x92] 掩膜低 bin
     reg [9:0]  mask_hi  = 10'd0;         // [0x92] 掩膜高 bin
-    reg        play_en  = 1'b0;           // [0x93] DAC 回放使能
-    wire [7:0] da_play;
+    reg        play_en  = 1'b0;
+    wire [7:0] da_play;           // [0x93] DAC 回放使能
     function [9:0] rev10f;
         input [9:0] x;
         integer b;
