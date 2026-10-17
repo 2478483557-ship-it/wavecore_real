@@ -588,6 +588,44 @@ module tb_self_fft;
             play_en = 1'b0;
         end
 
+        $display("-------- [10-17] 复现 run_ifft.bat 的真实命令顺序 --------");
+        begin : seq_t
+            integer i, nz, mn, mx, v;
+            sel = 3'd3; ovl_en = 1'b0; play_en = 1'b0;
+            mask_lo = 10'd98; mask_hi = 10'd102;
+            // ① 0x8A 正向 FFT
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            @(posedge res_done); repeat (40) @(posedge clk);
+            // ② 0x8E 取谱 -> 板上等价于**又一次 run**(spec_run_w), 这是关键差异
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            @(posedge res_done); repeat (40) @(posedge clk);
+            $display("   ② 取谱(等价 0x8E)之后: st=%0d inv_done=%0d", u_dut.st, u_dut.inv_done);
+            // ③ 0x92 掩膜 -> 反向
+            @(negedge clk); inv_run = 1'b1; @(negedge clk); inv_run = 1'b0;
+            repeat (120000) @(posedge clk);
+            $display("   ③ 反向之后: st=%0d inv_done=%0d inv_pend=%0d", u_dut.st, u_dut.inv_done, u_dut.inv_pend);
+            // ④ 0x93 开回放
+            play_en = 1'b1;
+            repeat (600) @(posedge clk);
+            $display("   ④ 开回放后: st=%0d(S_PLAY=19) inv_done=%0d", u_dut.st, u_dut.inv_done);
+            // ⑤ 再补发一次 0x92(工具里就是这么做的)
+            @(negedge clk); inv_run = 1'b1; @(negedge clk); inv_run = 1'b0;
+            repeat (120000) @(posedge clk);
+            $display("   ⑤ 补发 0x92 之后: st=%0d inv_done=%0d", u_dut.st, u_dut.inv_done);
+            // ⑥ 长时间观察 da_play
+            nz = 0; mn = 999; mx = -1;
+            for (i = 0; i < 4000; i = i + 1) begin
+                @(posedge clk);
+                v = da_play;
+                if (v != 128) nz = nz + 1;
+                if (v < mn) mn = v;
+                if (v > mx) mx = v;
+            end
+            $display("   da_play: 非中值 %0d/4000  范围 [%0d, %0d]  st=%0d", nz, mn, mx, u_dut.st);
+            chk("真实命令顺序下 DA 仍有输出", nz > 200);
+            play_en = 1'b0;
+        end
+
         $display("=====================================================");
         $display("RESULT: PASS=%0d  FAIL=%0d", n_pass, n_fail);
         if (n_fail == 0) $display("*** 全部通过 ***  (6 个场景 + 11 项 0x8E 幅度谱检查: A/B 严格, C 分不开, D 真双峰, E 非整数bin, F 高bin溢出)");
