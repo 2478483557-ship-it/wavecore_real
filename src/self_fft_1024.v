@@ -182,9 +182,16 @@ module self_fft_1024 #(
     //   解码方式(正文里告诉用户):
     //     SF = 0xD00000 | (st<<8) | (play_en<<4 | inv_done<<3 | inv_pend<<2 | inv_mode<<1 | cap_on)
     //     即 SF 的十六进制前 4 位是 D, 后 4 位里: 高 2 位十六进制=状态机, 最低位=各标志
-    //   SF 十六进制: 前 2 位固定 D0, 第 3~4 位 = 状态机编号, 第 5~6 位 = 标志位(十六进制)
-    assign dbg_rd1 = {8'hD0, st, 7'd0,
-                      play_en, inv_done, inv_pend, inv_mode, cap_on};
+    // [10-17 修复] 原来写 {8'hD0, st, 7'd0, 5个标志} —— 但 **st 是 5 位**(S_PLAY=5'd19),
+    //   拼起来 25 位, 赋给 24 位被**截断**, 于是 SF 显示成乱数(实机差值是 4096 的整数倍,
+    //   正是 st<<12 的痕迹, 从用户数据反推确认)。
+    //   改成十进制友好编码, 保证 < 10^7(上报只有 7 位):
+    //     SF = 500000 + st*1000 + 标志字节
+    //     解码: 状态机 = (SF-500000)/1000, 标志 = (SF-500000)%1000 的二进制
+    //     标志位: bit4=play_en bit3=inv_done bit2=inv_pend bit1=inv_mode bit0=cap_on
+    wire [7:0] dbg_flag = {3'd0, play_en, inv_done, inv_pend, inv_mode, cap_on};
+    wire [23:0] dbg_sf = 24'd500000 + {st, 10'd0} + {16'd0, dbg_flag};
+    assign dbg_rd1 = dbg_sf;                         // 7 位以内, 不会溢出
     assign dbg_rd2 = {16'd0, da_play};              // 送 DAC 的当前样点(0..255)
     assign dbg_rd3 = {14'd0, play_idx};             // 回放到第几个点(0..1023)
 
