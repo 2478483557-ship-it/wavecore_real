@@ -12,11 +12,12 @@ cd "$(dirname "$0")"
 echo "[0/4] 同步被测源码 (以仓库 src/ 为准)"
 cp -f ../../src/self_fft_1024.v ./self_fft_1024.v
 cp -f ../../src/hann_rom.v     ./hann_rom.v
+cp -f ../../src/invwin_rom.v  ./invwin_rom.v
 cp -f ../../src/blackman_rom.v ./blackman_rom.v      # [10-16] 自适应窗新增
 cp -f ../../src/spec_compress.v ./spec_compress.v   # [0x8E] 谱帧压缩器(self_fft 新例化)
 
-# ---- 窗表一致性断言(2026-09-30 加 Hann 窗后新增; 10-16 加 Blackman) --------
-# hann_rom.v / blackman_rom.v 里写的是 $readmemh("D:/Verilog_project/wavecore/src/xxx.hex", ...)
+# hann_rom.v / invwin_rom.v / blackman_rom.v 里写的是 $readmemh("D:/Verilog_project/wavecore/src/xxx.hex", ...)
+# invwin_rom.v hann_rom.v / blackman_rom.v 里写的是 $readmemh("D:/Verilog_project/wavecore/src/xxx.hex", ...)
 # 即**工程绝对路径**。如果工程里那份和仓库 src/ 那份不一样, 仿真就是在拿另一张
 # 表做验证 —— 结论看着对, 其实测的不是仓库里的代码(SK-024 的坑)。
 for T in hann_1024 blackman_1024; do
@@ -33,7 +34,7 @@ echo "[1/4] 生成激励表"
 
 echo "[2/4] 编译"
 rm -rf xsim.dir work
-xvlog self_fft_1024.v spec_compress.v hann_rom.v blackman_rom.v twiddle_rom.v blk_mem_gen_1.v tb_self_fft.v 2>&1 | tee xvlog.log
+xvlog self_fft_1024.v spec_compress.v invwin_rom.v hann_rom.v blackman_rom.v twiddle_rom.v blk_mem_gen_1.v tb_self_fft.v 2>&1 | tee xvlog.log
 
 echo "[3/4] 精化"
 xelab tb_self_fft -s tb_sim -timescale 1ns/1ps 2>&1 | tee xelab.log

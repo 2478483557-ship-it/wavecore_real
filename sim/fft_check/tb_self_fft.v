@@ -778,6 +778,51 @@ module tb_self_fft;
             $display("  已写出 ifft_dump.txt (1024 点)");
         end
 
+        $display("-------- [10-17] 逆窗补偿后: 回放包络是否平坦 --------");
+        begin : env_t
+            integer k, pt, segidx, fd;
+            integer smin [0:9];
+            integer smax [0:9];
+            sel = 3'd3; ovl_en = 1'b0; play_en = 1'b0;
+            mask_lo = 10'd96; mask_hi = 10'd108;
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            @(posedge res_done); repeat (60) @(posedge clk);
+            @(negedge clk); inv_run = 1'b1; @(negedge clk); inv_run = 1'b0;
+            @(posedge res_done); repeat (60) @(posedge clk);
+            for (k = 0; k < 10; k = k + 1) begin smin[k] = 999; smax[k] = -999; end
+            play_en = 1'b1;
+            repeat (400) @(posedge clk);        // 等进入 S_PLAY
+            fd = $fopen("play_dump.txt", "w");
+            // 采完整一圈: 1024 点 x decim(=1000) 拍
+            for (k = 0; k < 1024; k = k + 1) begin
+                repeat (1000) @(posedge clk);
+                $fdisplay(fd, "%0d", da_play);
+                segidx = k / 102;                  // 10 段
+                if (segidx > 9) segidx = 9;
+                if ($signed({1'b0,da_play}) < smin[segidx]) smin[segidx] = $signed({1'b0,da_play});
+                if ($signed({1'b0,da_play}) > smax[segidx]) smax[segidx] = $signed({1'b0,da_play});
+            end
+            $fclose(fd);
+            $display("  十段的峰峰值:");
+            begin : chk_env
+                integer gmin, gmax;
+                gmin = 99999; gmax = -99999;
+                for (k = 0; k < 10; k = k + 1) begin
+                    $display("    段%0d: %0d ~ %0d  峰峰 %0d", k, smin[k], smax[k], smax[k]-smin[k]);
+                    if (smax[k]-smin[k] < gmin) gmin = smax[k]-smin[k];
+                    if (smax[k]-smin[k] > gmax) gmax = smax[k]-smin[k];
+                end
+                $display("  包络: 最小 %0d 最大 %0d -> 起伏 %0d%%", gmin, gmax,
+                         (gmax-gmin)*100/(gmax == 0 ? 1 : gmax));
+                // [10-17] 逆窗补偿的验收: 各段峰峰值应基本一致。
+                //   补偿前两端衰减到 47%(起伏 >50%), 补偿后应在 20% 以内。
+                chk("逆窗补偿后包络平坦(起伏 < 20%)",
+                    (gmax > 0) && ((gmax-gmin)*100/gmax < 20));
+            end
+            play_en = 1'b0;
+            repeat (300) @(posedge clk);
+        end
+
         $display("=====================================================");
         $display("RESULT: PASS=%0d  FAIL=%0d", n_pass, n_fail);
         if (n_fail == 0) $display("*** 全部通过 ***  (6 个场景 + 11 项 0x8E 幅度谱检查: A/B 严格, C 分不开, D 真双峰, E 非整数bin, F 高bin溢出)");

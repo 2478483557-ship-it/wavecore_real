@@ -95,6 +95,7 @@ module self_fft_1024 #(
     //   行为与 2026-09-30 之前**逐位相同**(已上板验证过的那版)。
     reg  [9:0]  w_addr;
     wire [15:0] win_hann, win_black;
+    // [10-17 新增] 逆窗补偿表: 反变换回来后除以窗函数, 消除纺锤形包络
     generate
         if (USE_HANN) begin : g_win
             hann_rom     u_hann_self  (.clk(clk), .addr(w_addr), .wout(win_hann));
@@ -175,7 +176,15 @@ module self_fft_1024 #(
     // 增益: 每级 >>1 -> 往返衰减 1/N(见 model_ifft.py)。本版先保证算法正确。
     reg  inv_mode;
     reg  [9:0]  play_idx;
+
+    // [10-17] 逆窗补偿表: 反变换回来后除以窗函数, 消除纺锤形包络
+    wire [15:0] inv_win;
+    invwin_rom u_invwin (.clk(clk), .addr(play_idx), .iwout(inv_win));
     reg  signed [19:0] play_g;
+    // [10-17] 逆窗补偿后的样点必须用**组合 wire**:
+    //   若写成 reg 并在同一拍 `play_g <= xc<<<1`，读到的是上一拍的 xc，
+    //   整个回放会晚一个点(频率对但相位错, 且首点取到复位值 0)。
+    wire signed [19:0] xc = ($signed(dout[31:16]) * $signed({1'b0, inv_win})) >>> 12;
     reg  signed [19:0] play_c;
     reg  inv_done;   // 反向变换是否已跑完过(mem 里现在是不是"时域波形")
     reg  inv_pend;   // inv_run 只有 1 拍; 若 FSM 当时不在 S_CAP 就丢了 -> 先锁存
@@ -498,12 +507,22 @@ module self_fft_1024 #(
                     end
                     else if (dcnt == decim_use - 32'd1) begin
                         dcnt <= 32'd0;
-                        play_g <= (($signed(dout[31:16])) <<< 2) + $signed(dout[31:16]);  // x5
-                        play_c <= ((($signed(dout[31:16])) <<< 2) + $signed(dout[31:16])) > 20'sd127
+                        // [10-17] 逆窗补偿: 先乘 1/max(hann,0.25)(Q12)再还原,
+                        //   把"反变换带回的 Hann 包络"除掉, 波形恢复等幅。
+                        //   inv_win 由 invwin_rom 按 play_idx 查出, 1 拍延迟
+                        //   恰好与 play_idx 同步(addr 每 decim_use 拍才变一次)。
+                        // 逆窗补偿: x * (1/max(hann,0.25)) ，inv_win 是 Q12 定点(1.0~4.0)
+                        //   乘积最大 32767*16384 = 5.4e8，32 位有符号够用。
+                        // 基础增益取 x2：
+                        //   实测 IFFT 输出峰值约 13~20；逆窗最多放大 4 倍 -> 52~80；
+                        //   再 x2 得上限 104~160，略高于 127 时由下面的饱和兜住。
+                        //   原来的 x5 在加入补偿后必然削顶，故降到 x2。
+                        play_g <= (xc <<< 1);
+                        play_c <= (xc <<< 1) > 20'sd127
                                   ? 20'sd127
-                                  : (((($signed(dout[31:16])) <<< 2) + $signed(dout[31:16])) < -20'sd128
+                                  : ((xc <<< 1) < -20'sd128
                                      ? -20'sd128
-                                     : (($signed(dout[31:16])) <<< 2) + $signed(dout[31:16]));
+                                     : (xc <<< 1));
                         da_play <= play_c[7:0] + 8'd128;   // 补码 -> 偏置二进制
                         if (play_idx == 10'd1023) play_idx <= 10'd0;
                         else                      play_idx <= play_idx + 10'd1;
