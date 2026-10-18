@@ -337,7 +337,7 @@ class WaveCoreApp:
         )
         self.self_fft_var = tk.StringVar(value="-- / -- / -- Hz")
         # [10-18] 当前实际使用的窗 (来自 SF/S2/S3 之后那条 WIN= 行)
-        self.win_used_var = tk.StringVar(value="--")
+        self.win_used_var = tk.StringVar(value="Hann 窗")
         self.main_frequency_var = tk.StringVar(value="1000")
         self.second_frequency_var = tk.StringVar(value="1100")
         self.waveform_choice_var = tk.StringVar(value="正弦")
@@ -351,7 +351,7 @@ class WaveCoreApp:
 
         # ---- [10-16 v1.22] 新功能状态 ----
         self.window_choice_var = tk.StringVar(value=self.WINDOW_CHOICES[0][0])
-        self.window_info_var = tk.StringVar(value="窗函数 Hann（默认）")
+        self.window_info_var = tk.StringVar(value="Hann 窗 · 手动")
         self.overlap_var = tk.BooleanVar(value=False)
         self.overlap_info_var = tk.StringVar(value="整帧采集（默认）")
         self.mask_lo_var = tk.StringVar(value="98")
@@ -379,13 +379,19 @@ class WaveCoreApp:
         self._configure_window()
         self._configure_styles()
         self._build_ui()
+        # 上电默认是手动 Hann（与 KN_DEF 一样是「已固化的默认」），
+        #   统一走一次刷新，避免初始值与后续格式不一致。
+        self._refresh_window_info()
         self.refresh_ports()
         self.root.after(50, self._process_events)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _configure_window(self):
         self.root.title("WaveCore FPGA上位机")
-        self.root.geometry("1200x850")
+        # [10-18] 850 太矮: 串口 64 + 测量 170 + 控制面板 394 之后,
+        #   绘图区只剩 186px (22%), 波形和频谱被压成一条。
+        #   屏幕 1067 高, 提到 940 仍留出任务栏与标题栏余量。
+        self.root.geometry("1200x940")
         # [10-18] 固定初始尺寸, 并且**不自动随内容缩放** ——
         #   原来控制面板里的说明文字会变长(比如勾了自适应), 导致窗口被越撑越宽。
         #   现在: 所有会变的文字都用 _fixed_label 定宽, 窗口尺寸也就稳定了。
@@ -466,9 +472,8 @@ class WaveCoreApp:
         _measurement_card(measurements, 1, "脉宽 W", self.pulse_width_var, row=1)
         _measurement_card(measurements, 2, "识别结果", self.detected_waveform_var, row=1)
         _measurement_card(measurements, 3, "自研FFT SF/S2/S3", self.self_fft_var, row=1)
-        _measurement_card(measurements, 0, "当前窗", self.win_used_var, row=2)
 
-        controls = ttk.LabelFrame(self.root, text="信号与采集控制", padding=(10, 7))
+        controls = ttk.LabelFrame(self.root, text="信号与采集控制", padding=(8, 4))
         controls.grid(row=2, column=0, sticky="ew", padx=12, pady=4)
 
         ttk.Label(controls, text="主频：").grid(row=0, column=0)
@@ -497,13 +502,13 @@ class WaveCoreApp:
             row=0, column=8, padx=4
         )
 
-        ttk.Label(controls, text="预设档位：").grid(row=1, column=0, pady=(6, 0))
+        ttk.Label(controls, text="预设档位：").grid(row=1, column=0, pady=(3, 0))
         for offset, (label, index, frequency) in enumerate(self.PRESETS, start=1):
             ttk.Button(
                 controls,
                 text=label,
                 command=lambda i=index, f=frequency: self.set_preset(i, f),
-            ).grid(row=1, column=offset, padx=4, pady=(6, 0))
+            ).grid(row=1, column=offset, padx=4, pady=(3, 0))
 
         self.csv_button = ttk.Button(
             controls,
@@ -516,7 +521,7 @@ class WaveCoreApp:
             column=5,
             columnspan=2,
             padx=4,
-            pady=(6, 0),
+            pady=(3, 0),
             sticky="ew",
         )
 
@@ -530,32 +535,32 @@ class WaveCoreApp:
             column=7,
             columnspan=2,
             padx=4,
-            pady=(6, 0),
+            pady=(3, 0),
             sticky="ew",
         )
 
-        ttk.Label(controls, text="输出波形：").grid(row=2, column=0, pady=(6, 0))
+        ttk.Label(controls, text="输出波形：").grid(row=2, column=0, pady=(3, 0))
         ttk.Combobox(
             controls,
             textvariable=self.waveform_choice_var,
             values=("正弦", "方波", "三角"),
             state="readonly",
             width=10,
-        ).grid(row=2, column=1, padx=4, pady=(6, 0))
+        ).grid(row=2, column=1, padx=4, pady=(3, 0))
         ttk.Button(controls, text="应用波形", command=self.set_waveform_choice).grid(
-            row=2, column=2, padx=4, pady=(6, 0)
+            row=2, column=2, padx=4, pady=(3, 0)
         )
 
-        ttk.Label(controls, text="触发：").grid(row=2, column=3, pady=(6, 0))
+        ttk.Label(controls, text="触发：").grid(row=2, column=3, pady=(3, 0))
         ttk.Combobox(
             controls,
             textvariable=self.trigger_choice_var,
             values=("自由", "上升沿", "下降沿"),
             state="readonly",
             width=10,
-        ).grid(row=2, column=4, padx=4, pady=(6, 0))
+        ).grid(row=2, column=4, padx=4, pady=(3, 0))
         ttk.Button(controls, text="应用触发", command=self.set_trigger_choice).grid(
-            row=2, column=5, padx=4, pady=(6, 0)
+            row=2, column=5, padx=4, pady=(3, 0)
         )
         ttk.Button(
             controls,
@@ -563,7 +568,7 @@ class WaveCoreApp:
             command=self.run_self_fft,
             style="Accent.TButton",
         ).grid(
-            row=2, column=6, padx=4, pady=(6, 0)
+            row=2, column=6, padx=4, pady=(3, 0)
         )
         ttk.Button(
             controls,
@@ -571,7 +576,7 @@ class WaveCoreApp:
             command=lambda: self.set_sweep(True),
             style="Accent.TButton",
         ).grid(
-            row=2, column=7, padx=4, pady=(6, 0)
+            row=2, column=7, padx=4, pady=(3, 0)
         )
         ttk.Button(
             controls,
@@ -579,131 +584,131 @@ class WaveCoreApp:
             command=lambda: self.set_sweep(False),
             style="Stop.TButton",
         ).grid(
-            row=2, column=8, padx=4, pady=(6, 0)
+            row=2, column=8, padx=4, pady=(3, 0)
         )
 
         # ---- 行3: 电压标定 (v1.17, 0x8C) ----
         # Vpp 现在以 mV 上报。KN = 每 LSB 多少 mV x1024(Q10)。
         # "原始LSB"按钮把 KN 设成 1024, 此时 V 字段就是 ADC 计数 —— 标定第一步用它。
-        ttk.Label(controls, text="电压标定 KN：").grid(row=3, column=0, pady=(6, 0))
+        ttk.Label(controls, text="电压标定 KN：").grid(row=3, column=0, pady=(3, 0))
         ttk.Entry(controls, textvariable=self.vpp_kn_var, width=8).grid(
-            row=3, column=1, padx=4, pady=(6, 0)
+            row=3, column=1, padx=4, pady=(3, 0)
         )
         ttk.Button(controls, text="应用标定", command=self.apply_vpp_cal).grid(
-            row=3, column=2, padx=4, pady=(6, 0)
+            row=3, column=2, padx=4, pady=(3, 0)
         )
         ttk.Button(
             controls,
             text="原始LSB模式",
             command=lambda: self.apply_vpp_cal(RAW_LSB_KN),
-        ).grid(row=3, column=3, padx=4, pady=(6, 0))
+        ).grid(row=3, column=3, padx=4, pady=(3, 0))
         ttk.Button(
             controls,
             text="恢复默认",
             command=lambda: self.apply_vpp_cal(DEFAULT_VPP_KN),
-        ).grid(row=3, column=4, padx=4, pady=(6, 0))
+        ).grid(row=3, column=4, padx=4, pady=(3, 0))
         ttk.Label(controls, textvariable=self.vpp_cal_info_var).grid(
-            row=3, column=5, columnspan=4, padx=(12, 0), pady=(6, 0), sticky="w"
+            row=3, column=5, columnspan=4, padx=(12, 0), pady=(3, 0), sticky="w"
         )
 
         # ---- 行4: 时基档位 (v1.20, 0x8D) ----
-        ttk.Label(controls, text="采样时基：").grid(row=4, column=0, pady=(6, 0))
+        ttk.Label(controls, text="采样时基：").grid(row=4, column=0, pady=(3, 0))
         ttk.Combobox(
             controls,
             textvariable=self.timebase_choice_var,
             values=tuple(label for label, _ in self.TIMEBASE_CHOICES),
             state="readonly",
             width=13,
-        ).grid(row=4, column=1, padx=4, pady=(6, 0))
+        ).grid(row=4, column=1, padx=4, pady=(3, 0))
         ttk.Button(controls, text="应用时基", command=self.apply_timebase).grid(
-            row=4, column=2, padx=4, pady=(6, 0)
+            row=4, column=2, padx=4, pady=(3, 0)
         )
         ttk.Label(controls, textvariable=self.timebase_info_var).grid(
-            row=4, column=3, columnspan=6, padx=(12, 0), pady=(6, 0), sticky="w"
+            row=4, column=3, columnspan=6, padx=(12, 0), pady=(3, 0), sticky="w"
         )
         # ---- 行5: 预触发比例 (v1.21, 0x8F) ----
         # 静默命令、无 ACK；只能靠波形图上"触发点的位置"判断是否生效。
         # 0%=帧首点即触发点；50%=触发点位于帧正中（可见触发沿左侧波形）。
-        ttk.Label(controls, text="预触发：").grid(row=5, column=0, pady=(6, 0))
+        ttk.Label(controls, text="预触发：").grid(row=5, column=0, pady=(3, 0))
         ttk.Combobox(
             controls,
             textvariable=self.pretrigger_choice_var,
             values=tuple(label for label, _ in self.PRETRIGGER_CHOICES),
             state="readonly",
             width=13,
-        ).grid(row=5, column=1, padx=4, pady=(6, 0))
+        ).grid(row=5, column=1, padx=4, pady=(3, 0))
         ttk.Button(controls, text="应用预触发", command=self.apply_pretrigger).grid(
-            row=5, column=2, padx=4, pady=(6, 0)
+            row=5, column=2, padx=4, pady=(3, 0)
         )
         ttk.Label(controls, textvariable=self.pretrigger_info_var).grid(
-            row=5, column=3, columnspan=6, padx=(12, 0), pady=(6, 0), sticky="w"
+            row=5, column=3, columnspan=6, padx=(12, 0), pady=(3, 0), sticky="w"
         )
 
         # ---- 行6: 窗函数 (v1.22, 0x90) ----
         # 静默命令、无 ACK。判据: 看**远离主峰的底噪高度**随窗变化。
         # 副瓣 矩形 -13dB / Hann -31dB / Blackman -58dB -> 底噪依次降低。
-        ttk.Label(controls, text="频谱窗：").grid(row=6, column=0, pady=(6, 0))
+        ttk.Label(controls, text="频谱窗：").grid(row=6, column=0, pady=(3, 0))
         ttk.Combobox(
             controls,
             textvariable=self.window_choice_var,
             values=tuple(label for label, _ in self.WINDOW_CHOICES),
             state="readonly",
             width=17,
-        ).grid(row=6, column=1, padx=4, pady=(6, 0))
+        ).grid(row=6, column=1, padx=4, pady=(3, 0))
         ttk.Button(controls, text="应用窗函数", command=self.apply_window).grid(
-            row=6, column=2, padx=4, pady=(6, 0)
+            row=6, column=2, padx=4, pady=(3, 0)
         )
         self.win_auto_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             controls, text="自适应选窗", variable=self.win_auto_var,
             command=self.apply_win_auto,
-        ).grid(row=6, column=4, columnspan=2, padx=(12, 0), pady=(6, 0), sticky="w")
+        ).grid(row=6, column=4, columnspan=2, padx=(12, 0), pady=(3, 0), sticky="w")
         self.spec_avg_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             controls, text="谱平均(8帧)", variable=self.spec_avg_var,
             command=self.apply_spec_avg,
-        ).grid(row=6, column=6, columnspan=2, padx=(12, 0), pady=(6, 0), sticky="w")
+        ).grid(row=6, column=6, columnspan=2, padx=(12, 0), pady=(3, 0), sticky="w")
         _fixed_label(controls, self.window_info_var, 22).grid(
-            row=6, column=3, columnspan=1, padx=(12, 0), pady=(6, 0), sticky="w"
+            row=6, column=3, columnspan=1, padx=(12, 0), pady=(3, 0), sticky="w"
         )
 
         # ---- 行7: 帧重叠 (v1.22, 0x91) ----
-        ttk.Label(controls, text="帧重叠：").grid(row=7, column=0, pady=(6, 0))
+        ttk.Label(controls, text="帧重叠：").grid(row=7, column=0, pady=(3, 0))
         ttk.Checkbutton(
             controls, text="50% 重叠（帧间无空白）", variable=self.overlap_var,
             command=self.apply_overlap,
-        ).grid(row=7, column=1, columnspan=2, padx=4, pady=(6, 0), sticky="w")
+        ).grid(row=7, column=1, columnspan=2, padx=4, pady=(3, 0), sticky="w")
         _fixed_label(controls, self.overlap_info_var, 40).grid(
-            row=7, column=3, columnspan=6, padx=(12, 0), pady=(6, 0), sticky="w"
+            row=7, column=3, columnspan=6, padx=(12, 0), pady=(3, 0), sticky="w"
         )
 
         # ---- 行8: IFFT 频域滤波 (v1.22, 0x92) + DAC 回放 (0x93) ----
         # 流程: 先按 0x8A 跑一次自研 FFT(产生频谱) -> 设掩膜 -> 运行滤波 -> 开 DAC 回放。
         # 掩膜要给**带宽**, 别只给一根谱线: 加窗把单音展宽成 ±1 bin,
         #   实测只掩 bin100 几乎无压制, 掩 98~102 才到 34 dB。
-        ttk.Label(controls, text="频域滤波：").grid(row=8, column=0, pady=(6, 0))
+        ttk.Label(controls, text="频域滤波：").grid(row=8, column=0, pady=(3, 0))
         ttk.Spinbox(
             controls, from_=0, to=511, width=5, textvariable=self.mask_lo_var
-        ).grid(row=8, column=1, padx=(4, 16), pady=(6, 0))
-        ttk.Label(controls, text="~").grid(row=8, column=1, pady=(6, 0), sticky="e")
+        ).grid(row=8, column=1, padx=(4, 16), pady=(3, 0))
+        ttk.Label(controls, text="~").grid(row=8, column=1, pady=(3, 0), sticky="e")
         ttk.Spinbox(
             controls, from_=0, to=511, width=5, textvariable=self.mask_hi_var
-        ).grid(row=8, column=2, padx=(10, 0), pady=(6, 0))
+        ).grid(row=8, column=2, padx=(10, 0), pady=(3, 0))
         ttk.Button(controls, text="运行滤波", command=self.apply_ifft).grid(
-            row=8, column=3, padx=4, pady=(6, 0)
+            row=8, column=3, padx=4, pady=(3, 0)
         )
         # [10-17 补] 停止频域滤波 / 恢复原始信号。
         #   掩膜是**原地改写** mem 的, 跑过就回不去 —— 只能关回放 + 重采一帧。
         self.ifft_stop_button = ttk.Button(
             controls, text="恢复原始", command=self.stop_ifft
         )
-        self.ifft_stop_button.grid(row=8, column=4, padx=4, pady=(6, 0))
+        self.ifft_stop_button.grid(row=8, column=4, padx=4, pady=(3, 0))
 
         ttk.Checkbutton(
             controls, text="DAC 回放", variable=self.play_var, command=self.toggle_play
-        ).grid(row=8, column=5, columnspan=1, padx=4, pady=(6, 0), sticky="w")
+        ).grid(row=8, column=5, columnspan=1, padx=4, pady=(3, 0), sticky="w")
         _fixed_label(controls, self.ifft_info_var, 44).grid(
-            row=8, column=6, columnspan=4, padx=(12, 0), pady=(6, 0), sticky="w"
+            row=8, column=6, columnspan=4, padx=(12, 0), pady=(3, 0), sticky="w"
         )
 
         # ===== [10-18] 波形识别：独立一区 =====
@@ -713,7 +718,7 @@ class WaveCoreApp:
         ttk.Separator(controls, orient="horizontal").grid(
             row=9, column=0, columnspan=10, sticky="ew", pady=(10, 0)
         )
-        ttk.Label(controls, text="波形识别：").grid(row=10, column=0, pady=(8, 0))
+        ttk.Label(controls, text="波形识别：").grid(row=10, column=0, pady=(4, 0))
 
         self.wave_src_var = tk.StringVar(value="规则法 (TY)")
         self.wave_src_box = ttk.Combobox(
@@ -721,19 +726,22 @@ class WaveCoreApp:
             values=("规则法 (TY)", "神经网络 (NN)"),
             state="readonly", width=15,
         )
-        self.wave_src_box.grid(row=10, column=1, columnspan=2, padx=4, pady=(8, 0), sticky="w")
+        self.wave_src_box.grid(row=10, column=1, columnspan=2, padx=4, pady=(4, 0), sticky="w")
         self.wave_src_box.bind("<<ComboboxSelected>>", self.on_wave_src_changed)
 
         _fixed_label(controls, self.wave_src_info_var, 14).grid(
-            row=10, column=3, columnspan=2, padx=(12, 0), pady=(8, 0), sticky="w"
+            row=10, column=3, columnspan=2, padx=(12, 0), pady=(4, 0), sticky="w"
         )
 
         _fixed_label(controls, self.applied_settings_var, 96).grid(
-            row=11, column=0, columnspan=10, pady=(6, 0), sticky="w"
+            row=11, column=0, columnspan=10, pady=(3, 0), sticky="w"
         )
 
         self.plot_notebook = ttk.Notebook(self.root)
         self.plot_notebook.grid(row=3, column=0, sticky="nsew", padx=12, pady=(4, 10))
+        # [10-18] 绘图区保底高度。控制面板一旦再加行, 这里也不会被压到看不见;
+        #   超出时窗口会被撑高, 而不是牺牲曲线。
+        self.plot_notebook.configure(height=520)
 
         waveform_tab = ttk.Frame(self.plot_notebook)
         self.spectrum_tab = ttk.Frame(self.plot_notebook)
@@ -1234,6 +1242,19 @@ class WaveCoreApp:
             raise ValueError("请选择0%、25%、50%或75%预触发") from error
 
     # ===================== [10-16 v1.22] 新增功能 =====================
+    def _refresh_window_info(self):
+        """把"当前实际用的窗"和"手动/自适应"合并成一行小字。
+
+        [10-18 二次修改] 起初给「当前窗」单独做了一张卡片，占了测量区一整行，
+        把下面的波形图和频谱图压掉一大截 —— 用户反馈"压得太多了"。
+        窗名本来就和"自适应/手动"是同一件事的两个侧面，合成一行更好：
+            矩形窗 · 自适应      Hann 窗 · 手动
+        既不新增控件，也不占额外高度。
+        """
+        name = self.win_used_var.get()
+        mode = "自适应" if self.win_auto_var.get() else "手动"
+        self.window_info_var.set("%s · %s" % (name, mode))
+
     def apply_window(self):
         """发送 0x90 窗函数档位。
 
@@ -1256,7 +1277,11 @@ class WaveCoreApp:
             self.win_used_var.set(
                 {0: "矩形窗", 1: "Hann 窗", 2: "Blackman 窗"}[index]
             )
-        self.window_info_var.set(detail)
+        self._refresh_window_info()
+        # detail 里是"矩形 -13dB / Hann -31dB / Blackman -58dB"这类解释，
+        #   放在状态栏一次即可，不长期占据控制面板那一行。
+        self.status_var.set(detail)
+        self._refresh_window_info()
 
     def apply_overlap(self):
         """发送 0x91 帧重叠开关。
@@ -1305,11 +1330,11 @@ class WaveCoreApp:
             return
         # [10-18] 只给短状态。原来那段"多数频率下判为 Hann…试 976Hz…"太长,
         #   一勾选就把整行撑宽、整个窗口被拉大。说明写在文档里, 这里只留 4 个字。
-        self.window_info_var.set("自适应" if auto else "手动")
         if auto:
             # 自适应下实际用哪个窗, 要等硬件判完才知道 —— 跑一次 FFT，
-            # 靠回传的 WIN= 行更新「当前窗」卡片。
+            # 靠回传的 WIN= 行更新这一行小字。
             self.win_used_var.set("待判定")
+        self._refresh_window_info()
 
     def on_wave_src_changed(self, event=None):
         """下拉框一改就切换识别来源（0x96），并立刻要一帧结果。
@@ -1877,6 +1902,7 @@ class WaveCoreApp:
             # [10-18] 每跑一次自研 FFT, 硬件在 SF/S2/S3 之后补一条 WIN= 行
             self.win_used_var.set(event["name"])
             self.latest_window_used = event["code"]
+            self._refresh_window_info()
 
         elif event_type == "self_fft_peak":
             self.latest_self_fft_peaks[event["name"]] = event["frequency_hz"]
