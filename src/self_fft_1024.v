@@ -23,6 +23,7 @@ module self_fft_1024 #(
     input  wire [31:0] fs_cfg,       // [0x8D] 等效采样率 Hz(0 = 用 50000)
     input  wire [1:0]  win_cfg,      // [0x90] 窗函数: 0=矩形 1=Hann 2=Blackman  (10-16 新增)
     input  wire        win_auto,     // [10-18] 自适应: 1=按频偏自动选窗(覆盖 win_cfg)
+    input  wire        avg_en,       // [10-18] 谱平均: 1=对 N 帧幅度取平均
     input  wire        ovl_en,       // [0x91] 50% 帧重叠: 0=原行为(1024点全新采集) 1=重叠  (10-16 新增)
     input  wire        inv_run,      // [0x92] IFFT 频域滤波: 在已完成的正向 FFT 上再跑一趟反向  (10-16 新增)
     input  wire [9:0]  mask_lo,      // [0x92] 掩膜低 bin(含)
@@ -357,17 +358,46 @@ module self_fft_1024 #(
     reg  [8:0]  sc_b2;
     reg         sc_w2;
     wire [7:0]  sc_y;
-    spec_compress u_scomp (.mag(sc_m1), .y(sc_y));
+    // [10-18] N 帧谱平均: **必须插在压缩之前**（线性域平均）。
+    //   对 8 位对数码取平均得到的是"平均对数幅度", 物理意义错、底噪也降不下来。
+    //   平均器自身延迟 3 拍, 所以压缩那两级打拍要相应下移。
     wire sc_valid = (st == S_PKRD) && pk_go && (scan == 2'd0);   // 第0趟的处理周期
+    wire [16:0] sc_m_avg;
+    spec_avg #(.SH(3)) u_savg (
+        .clk    (clk      ),
+        .rst_n  (rst_n    ),
+        .en     (avg_en   ),
+        .we     (sc_valid && (cur_bin <= 10'd511)),
+        .addr   (cur_bin[8:0]),
+        .mag    (d_mag    ),
+        .mag_out(sc_m_avg )
+    );
+    spec_compress u_scomp (.mag(sc_m_avg), .y(sc_y));
+    // [10-18] 平均器有 3 拍延迟, 写缓存的使能也要延 3 拍, 否则地址与数据错位
+    reg [2:0]  scv_d;
+    reg [9:0]  scb_d0, scb_d1, scb_d2;   // cur_bin 的 3 拍延迟副本
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            scv_d <= 3'd0; scb_d0 <= 10'd0; scb_d1 <= 10'd0; scb_d2 <= 10'd0;
+        end
+        else begin
+            scv_d  <= {scv_d[1:0], sc_valid && (cur_bin <= 10'd511)};
+            scb_d0 <= cur_bin;
+            scb_d1 <= scb_d0;
+            scb_d2 <= scb_d1;
+        end
+    end
+    wire sc_valid_d = scv_d[2];
+    wire [9:0] sc_bin_d = scb_d2;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             sc_m1<=17'd0; sc_b1<=10'd0; sc_w1<=1'b0;
             sc_y2<=8'd0;  sc_b2<=9'd0;  sc_w2<=1'b0;
         end
         else begin
-            sc_m1 <= d_mag;
-            sc_b1 <= cur_bin;
-            sc_w1 <= sc_valid && (cur_bin <= 10'd511);
+            sc_m1 <= sc_m_avg;   // 平均器已含 3 拍延迟, 这里再打 1 拍给压缩用
+            sc_b1 <= sc_bin_d;   // 与平均后数据对齐的 bin 号
+            sc_w1 <= sc_valid_d;
             sc_y2 <= sc_y;
             sc_b2 <= sc_b1[8:0];
             sc_w2 <= sc_w1;

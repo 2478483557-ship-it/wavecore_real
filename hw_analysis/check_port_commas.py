@@ -31,7 +31,16 @@ def check(path):
 
     errs = 0
     # 只挑像是端口声明(含 input/output/inout)的行
-    ports = [(n, l) for n, l in body if re.search(r'\b(input|output|inout)\b', l)]
+    # 只认**以 input/output/inout 开头**的行（去掉缩进后）。
+    # 原来的写法会把"注释里带 input/output 字样的行"也算进来，导致误报
+    # （实测 fft_report.v 的最后一个端口被误判成"缺逗号"）。
+    ports = []
+    for n, l in body:
+        code = re.sub(r'//.*$', '', l).strip()
+        if not code:
+            continue
+        if re.match(r'^(input|output|inout)\b', code):
+            ports.append((n, l))
     for idx, (n, l) in enumerate(ports):
         # 去掉注释
         code = re.sub(r'//.*$', '', l).rstrip()

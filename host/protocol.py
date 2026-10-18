@@ -216,6 +216,19 @@ def timebase_fs_hz(tier: int) -> float:
     return float(TIMEBASE_SAMPLE_RATES[tier])
 
 
+def command_set_spec_avg(on: bool) -> bytes:
+    """
+    生成 0x98 幅度谱 N 帧平均命令（协议 v1.22, 2026-10-18 新增）。
+
+    on=False -> 单帧（上电默认，行为与升级前一致）
+    on=True  -> 8 帧滑动平均，底噪降 sqrt(8) 约 4.5dB
+
+    平均作用在 0x8E 幅度谱帧这一路，上位机频谱图与瀑布图直接受益。
+    注意：平均会平滑掉谱的快变细节（时间常数约 8 帧），这是固有代价。
+    """
+    return build_command(0x98, bytes([1 if on else 0]))
+
+
 def command_set_win_auto(auto: bool) -> bytes:
     """
     生成 0x97 自适应选窗命令（协议 v1.22, 2026-10-18 新增）。

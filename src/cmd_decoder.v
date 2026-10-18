@@ -63,7 +63,8 @@ module cmd_decoder (
     output reg         dbg_read,   // [0x94] 状态回读触发(1拍脉冲)  [10-17]
     output reg         dbg_nn,     // [0x95] 神经网络结果回读(1拍脉冲)  [10-17]
     output reg         ty_src_sel, // [0x96] 识别来源: 0=TY规则法(默认) 1=神经网络
-    output reg         win_auto    // [0x97] 自适应选窗: 0=手动(默认) 1=自动
+    output reg         win_auto,   // [0x97] 自适应选窗: 0=手动(默认) 1=自动
+    output reg         avg_en      // [0x98] 谱平均: 0=关(默认) 1=开(8帧)
 );
 
     // 换算常量: round(2^32/5e7 x 2^24)
@@ -129,6 +130,8 @@ module cmd_decoder (
             dbg_nn      <= 1'b0;
             ty_src_sel  <= 1'b0;
             win_auto    <= 1'b0;
+            avg_en      <= 1'b0;
+            avg_en      <= 1'b0;
             win_auto    <= 1'b0;
             ty_src_sel  <= 1'b0;
             spec_req    <= 1'b0;
@@ -247,6 +250,9 @@ module cmd_decoder (
                                 8'h91: begin             // [10-16] 50% 帧重叠: 0=关 1=开
                                     ovl_set <= 1'b1;
                                     ovl_sel <= pbuf[0][0];
+                                end
+                                8'h98: begin             // [10-18] 谱平均
+                                    avg_en <= pbuf[0][0];
                                 end
                                 8'h97: begin             // [10-18] 自适应选窗
                                     win_auto <= pbuf[0][0];

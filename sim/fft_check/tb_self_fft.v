@@ -83,7 +83,8 @@ module tb_self_fft;
     always #10 clk = ~clk;                       // 20ns 周期 = 50MHz
 
     reg [1:0] win_cfg = 2'd1;
-    reg       win_auto = 1'b0;      // [10-18] 自适应选窗: 回归里关掉, 保持既有判据不变            // [10-16] 0=矩形 1=Hann 2=Blackman (默认 Hann, 保持既有回归不变)
+    reg       win_auto = 1'b0;
+    reg       avg_en   = 1'b0;      // [10-18] 谱平均: 回归里关掉(直通), 保持既有判据      // [10-18] 自适应选窗: 回归里关掉, 保持既有判据不变            // [10-16] 0=矩形 1=Hann 2=Blackman (默认 Hann, 保持既有回归不变)
     reg       ovl_en  = 1'b0;            // [0x91] 50% 帧重叠 (默认关, 保证既有回归不变)
     reg [31:0] dec_cfg = 32'd0;          // [0x8D] 0=用参数 DECIM
     reg        inv_run  = 1'b0;          // [0x92] IFFT 反向通行脉冲
@@ -122,6 +123,7 @@ module tb_self_fft;
         .decim_cfg(dec_cfg), .fs_cfg(32'd0),   // [0x8D] 0 = 用参数(DECIM=1) / 50000
         .win_cfg(win_cfg),                   // [0x90] 窗函数运行时可切换
         .win_auto(win_auto),                 // [10-18] 自适应选窗
+        .avg_en(avg_en),                     // [10-18] 谱平均
         .ovl_en(ovl_en),                     // [0x91] 50% 帧重叠
         .inv_run(inv_run),                   // [0x92] IFFT 频域滤波
         .mask_lo(mask_lo),
@@ -812,6 +814,26 @@ module tb_self_fft;
             $display("  已写出 play_wave.txt (按 play_idx 变化逐点)");
             play_en = 1'b0;
             repeat (300) @(posedge clk);
+        end
+
+        $display("-------- [10-18] 谱平均开关不影响谱形状 --------");
+        begin : avg_t
+            // 平均器是"线性域多帧平均", 对**稳态正弦**不改变谱峰位置与相对形状。
+            // 这里只验证: 打开 avg_en 后谱峰仍落在同一 bin —— 说明接入没有搞错地址对齐。
+            integer pb1, pb2;
+            avg_en = 1'b0; sel = 3'd1;
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            @(posedge res_done); repeat (10) @(posedge clk);
+            pb1 = u_dut.pk_bin;
+            avg_en = 1'b1;
+            repeat (6) begin
+                @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+                @(posedge res_done); repeat (5) @(posedge clk);
+            end
+            pb2 = u_dut.pk_bin;
+            $display("    平均关: 峰 bin=%0d   平均开(8帧): 峰 bin=%0d", pb1, pb2);
+            chk("谱平均: 开关后峰位不变", pb1 == pb2);
+            avg_en = 1'b0;
         end
 
         $display("-------- [10-18] 自适应选窗: 频偏小用矩形, 频偏大用 Hann --------");

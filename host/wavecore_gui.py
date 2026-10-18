@@ -40,6 +40,7 @@ from protocol import (
     command_read_nn,         # [0x95] 神经网络识别结果  [10-17]
     command_set_ty_source,   # [0x96] 识别来源切换  [10-17]
     command_set_win_auto,    # [0x97] 自适应选窗  [10-18]
+    command_set_spec_avg,    # [0x98] 幅度谱平均  [10-18]
 )
 
 
@@ -619,6 +620,11 @@ class WaveCoreApp:
             controls, text="自适应选窗", variable=self.win_auto_var,
             command=self.apply_win_auto,
         ).grid(row=6, column=4, columnspan=2, padx=(12, 0), pady=(6, 0), sticky="w")
+        self.spec_avg_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            controls, text="谱平均(8帧)", variable=self.spec_avg_var,
+            command=self.apply_spec_avg,
+        ).grid(row=6, column=6, columnspan=2, padx=(12, 0), pady=(6, 0), sticky="w")
         ttk.Label(controls, textvariable=self.window_info_var).grid(
             row=6, column=3, columnspan=1, padx=(12, 0), pady=(6, 0), sticky="w"
         )
@@ -1220,6 +1226,19 @@ class WaveCoreApp:
             return
         self.overlap_info_var.set(
             "50% 重叠：帧间无信号空白、刷新率约翻倍" if on else "整帧采集（默认，与升级前一致）"
+        )
+
+    def apply_spec_avg(self):
+        """开关幅度谱 8 帧平均（0x98）。
+
+        对 0x8E 谱帧做线性域 8 帧滑动平均，底噪降 sqrt(8) 约 4.5dB。
+        代价：时间常数约 8 帧（T1 下约 160ms），快变细节会被平滑。
+        """
+        on = self.spec_avg_var.get()
+        if not self._send(command_set_spec_avg(on), "已切换谱平均"):
+            return
+        self.ifft_info_var.set(
+            "谱平均：%s（底噪%s）" % ("8 帧" if on else "关", "降约 4.5dB" if on else "按单帧")
         )
 
     def apply_win_auto(self):
