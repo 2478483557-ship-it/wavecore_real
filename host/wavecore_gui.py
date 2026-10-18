@@ -297,6 +297,7 @@ class WaveCoreApp:
         self.latest_waveform_type = None
         self.latest_self_fft_peaks = {"SF": None, "S2": None, "S3": None}
         self.latest_window_used = None
+        self.latest_frequency_hz = None
         self.suppress_peak_a_until = 0.0
         # [10-18] 最后一次收到 A 行的时刻。FPGA 只在"存在第二峰"时才发 A 行,
         #   所以超过一段时间没收到 = 第二峰消失了。
@@ -1757,6 +1758,32 @@ class WaveCoreApp:
 
         self.root.after(50, self._process_events)
 
+    def _describe_waveform_type(self, code, names):
+        """把 TY 值翻成"能看懂为什么是这个值"的文字。
+
+        [10-18] 用户实测反馈："一直显示识别不出来"。
+        查下来板子是好的 —— 串口实际在发 `TY=0`（方波）。
+        问题是**可信闸门**：RTL 里
+
+            ty_ok = (freq_hz <= 25kHz) && f_stable
+            ty_now = ty_ok ? wave_type : 3
+
+        也就是频率超过 25kHz 就强制报"其他"。而上电默认预设正是 100kHz，
+        所以一开机永远是"3：其他"，看上去像识别失败，实际是闸门在工作。
+
+        **闸门本身是对的**（>25kHz 落在自研谱的混叠区，特征已失真），
+        错的是界面上不说原因。现在把原因写在值后面。
+        """
+        base = f"{code}：{names.get(code, '未知')}"
+        if code != 3:
+            return base
+        f = self.latest_frequency_hz
+        if f is None:
+            return base
+        if f > 25000:
+            return f"{base}（{f}Hz 超 25kHz，混叠区不可信）"
+        return f"{base}（频率波动过大，等稳定）"
+
     def _handle_event(self, event):
         event_type = event.get("type")
 
@@ -1793,6 +1820,7 @@ class WaveCoreApp:
                     and time.monotonic() - self._last_peak_a_time > 1.5):
                 self.latest_peak_a_hz = None
                 self.peak_a_var.set("-- Hz")
+            self.latest_frequency_hz = event["frequency_hz"]
             self.frequency_var.set(f"{event['frequency_hz']} Hz")
             self.latest_vpp_value = event["vpp_mv"]
             self.vpp_var.set(f"{self.latest_vpp_value} {self._vpp_unit()}")
@@ -1842,7 +1870,7 @@ class WaveCoreApp:
             waveform_type = event["waveform_type"]
             self.latest_waveform_type = waveform_type
             self.detected_waveform_var.set(
-                f"{waveform_type}：{waveform_names.get(waveform_type, '未知')}"
+                self._describe_waveform_type(waveform_type, waveform_names)
             )
 
         elif event_type == "window_used":
