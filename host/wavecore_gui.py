@@ -277,6 +277,12 @@ class WaveCoreApp:
         self.latest_waveform_type = None
         self.latest_self_fft_peaks = {"SF": None, "S2": None, "S3": None}
         self.suppress_peak_a_until = 0.0
+        # [10-18] 最后一次收到 A 行的时刻。FPGA 只在"存在第二峰"时才发 A 行,
+        #   所以超过一段时间没收到 = 第二峰消失了。
+        #   这正是 IFFT 滤波成功最直观的表现: 双音 1k+5k -> 滤掉 5k -> A 行不再出现。
+        #   原来界面会一直保留旧的 A 值, 看起来像"没变化"。加超时清除后
+        #   "两个峰变一个峰"在界面上一眼可见。
+        self._last_peak_a_time = 0.0
         self.latest_waveform_samples = None
         self.latest_waveform_sample_rate_hz = None
         self.latest_vpp_value = None
@@ -983,6 +989,7 @@ class WaveCoreApp:
             self.dual_tone_enabled = False
             self.latest_peak_a_hz = None
             self.peak_a_var.set("-- Hz")
+            self._last_peak_a_time = 0.0
             self.suppress_peak_a_until = time.monotonic() + 1.0
             self._invalidate_self_fft()
             self._update_applied_settings()
@@ -1743,6 +1750,14 @@ class WaveCoreApp:
             self.status_var.set(event["message"])
 
         elif event_type == "measurement":
+            # [10-18] A 行超时清除: FPGA 只在存在第二峰时发 A 行,
+            #   1.5 秒内没收到 A 就是"第二峰已经没了" —— 直接显示 "--", 不要留旧值。
+            #   这是 IFFT 滤波 "两个峰变一个峰" 在界面上的直接体现。
+            if (self.latest_peak_a_hz is not None
+                    and self._last_peak_a_time > 0
+                    and time.monotonic() - self._last_peak_a_time > 1.5):
+                self.latest_peak_a_hz = None
+                self.peak_a_var.set("-- Hz（无第二峰）")
             self.frequency_var.set(f"{event['frequency_hz']} Hz")
             self.latest_vpp_value = event["vpp_mv"]
             self.vpp_var.set(f"{self.latest_vpp_value} {self._vpp_unit()}")
@@ -1757,19 +1772,18 @@ class WaveCoreApp:
             if event["name"] == "S":
                 self.latest_peak_s_hz = event["frequency_hz"]
                 self.peak_s_var.set(f"{event['frequency_hz']} Hz")
-                if self.applied_waveform_name == "正弦" and not self.dual_tone_enabled:
-                    self.latest_peak_a_hz = None
-                    self.peak_a_var.set("-- Hz")
             else:
                 if time.monotonic() < self.suppress_peak_a_until:
                     return
-                # 单音正弦没有需要展示的第二峰。波形切换瞬间可能还有上一种
-                # 波形的A报文滞留在串口中，忽略它可避免GUI和CSV记录旧谐波。
-                if self.applied_waveform_name == "正弦" and not self.dual_tone_enabled:
-                    self.latest_peak_a_hz = None
-                    self.peak_a_var.set("-- Hz")
-                    return
+                # [10-18] 原来这里有一条"如果是单音正弦就丢弃 A 行"的过滤，
+                #   理由是单音正弦不该有第二峰、收到的 A 是残留。
+                #   但它会**误杀 IFFT 演示**：用原始帧(0x87)设双音时 GUI 并不知道
+                #   dual_tone_enabled 已经为真，于是双音的第二峰被当成残留丢掉，
+                #   界面上永远只有一个峰。
+                #   改为**不猜测**：FPGA 发 A 就说明它检测到了第二峰，照实显示。
+                #   残留由上面 1.5 秒的超时清除处理（FPGA 不发 A 就自动变 "--"）。
                 self.latest_peak_a_hz = event["frequency_hz"]
+                self._last_peak_a_time = time.monotonic()
                 self.peak_a_var.set(f"{event['frequency_hz']} Hz")
 
         elif event_type == "duty":
