@@ -69,3 +69,8 @@ host/wavecore_measurements.csv
 host/*_measurements.csv
 host/*.csv
 last_*.log
+
+# [10-18] 仿真 dump 的临时波形数据（17MB，仅用于一次性分析，不入库）
+sim/**/play_wave.txt
+sim/**/ifft_dump.txt
+*.txt.bak

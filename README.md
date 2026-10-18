@@ -153,11 +153,10 @@ wavecore/
 ├── build/             # 构建与烧写脚本（create_project / reset_and_build / gen_mcs / program_flash）
 ├── sim/               # 仿真：fft_check(6 场景+11 项 0x8E 检查) / mv_check / fft_demo_check / board_elab
 ├── board/             # XDC、引脚表、串口协议 v1.22、复验清单、flash_guide
-├── host/              # 上位机：protocol.py + 一键工具（队友1 工位）
+├── host/              # 上位机：protocol.py + 一键工具（波形/仪表/频谱/瀑布图）
 ├── hw_analysis/       # 验证脚本与数值金标准（probe_interp / verify_hann_window / check_protocol_frames …）
-├── stm32/             # STM32+串口屏 资料归档（方案已取消）
 ├── skill/             # 技能包 SK-001~068（抗噪/触发/FFT四坑/固化/量化定标/时序/文档一致性等）
-└── report/            # 设计报告 / 演示材料包 / 精度标定 / 进度 / LLM 协作记录 / 验证记录
+└── report/            # 设计报告 / 演示材料包 / 精度标定 / 技术专题 / LLM 记录（索引见 report/README.md）
 ```
 
 ## How to Reproduce / 复现步骤

@@ -47,7 +47,7 @@
 ## 2. 设计原理与功能框图
 
 ### 2.1 系统框图
-【图 1 位置：系统框图（可用 `report/learning_notes.md` L0 数据流图重绘）】
+【图 1 位置：系统框图】
 
 数据流一句话：命令 → 解析 → DDS 查表 → DA → （回环/外部信号）→ AD 采样 → 并行四路处理（测量 / FFT / 波形缓存 / 识别）→ 串口多路让路上报 → PC 上位机。
 
@@ -219,7 +219,7 @@
 - 「审计 `skill/README.md`：清单表与正文条目是否一一对应、有无重复或失效条目；输出差异清单后再给修复补丁」
 - 「假设"BRAM 读延迟为 2 拍"，把自研 FFT 的找峰扫描按该假设仿真，输出结果并与硬件读数对照」
 
-> **完整实录（15 例，含逐条提示词要点、模型贡献、人的验证与纠错轨迹）见 `report/llm_collab_selected.md`；原始流水见 `report/llm_collab_log.md`。**
+> **完整实录（含逐条提示词要点、模型贡献、人的验证与纠错轨迹）见 `report/llm_collab_log.md`。**
 
 ---
 
@@ -288,7 +288,7 @@
 ### 8.2 未完成/未实施（及原因）
 - 音乐彩蛋（麦克风链路）：需额外硬件与资源（**资源攻坚前**主设计 LUT 占用 95.5%，
   现已降至 24.6%，资源不再是阻碍，但需额外麦克风硬件），列为可选；
-- 高频段多档采样率、CRC 校验、自动重传：均在 `report/backlog.md` 记录，为"排期未做"而非"未知"。
+- 高频段多档采样率、CRC 校验、自动重传：均已评估，属"排期未做"而非"未知"。
 
 ### 8.3 若重做一遍会改进什么
 1. **更早核对"改的那一个东西"是否真的变了**——资源优化的第 4 轮（`f_ram` 未进 BRAM）
@@ -358,7 +358,7 @@ README.md / src/ / sim/ / build/ / board/ / data/ / skill/ / report/ / host/
 - 资源对比：`report/resource_compare.md`；原始报告：`build/reports/`
 - 工程案例：`report/engineering_challenges.md`（7 大案例）
 - 技能包：`skill/README.md`（38 条）
-- 学习/复现笔记：`report/learning_notes.md`、`report/comm_basics.md`
+- 复现所需的全部步骤见本 README 与 `board/uart_protocol.md`。
 
 ## 附录 C：待补清单（提交前）
 - [ ] 图 1 系统框图（重绘导出 PNG）

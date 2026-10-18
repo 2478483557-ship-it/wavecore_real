@@ -68,7 +68,7 @@ bash sim/fft_demo_check/run_equiv.sh     # fft_demo 改块RAM 前后"样点流�
 
 > `.bat` 里的提示文字**故意全用英文**：Windows 的 cmd 按 GBK 读批处理文件，
 > 中文如果出现在 `if (...)` 块或 `set` 语句里，会被误解码成乱码甚至让脚本报错跑不起来。
-> 中文说明统一放 `report/beginner_guide.md`。
+> 中文说明统一放仓库根目录 `README.md`。
 
 两者都是"直接调 `unwrapped/win64.o/*.exe`"的纯命令行流程，环境变量在各目录的 `xenv.sh`。
 **注意 PATH 里必须写 `/d/...` 形式**，写 `D:/...` 会被 MSYS 当路径分隔符切坏。
