@@ -131,9 +131,6 @@ module cmd_decoder (
             ty_src_sel  <= 1'b0;
             win_auto    <= 1'b0;
             avg_en      <= 1'b0;
-            avg_en      <= 1'b0;
-            win_auto    <= 1'b0;
-            ty_src_sel  <= 1'b0;
             spec_req    <= 1'b0;
             tb_set      <= 1'b0;
             pre_set     <= 1'b0;
@@ -261,9 +258,6 @@ module cmd_decoder (
                                     ty_src_sel <= pbuf[0][0];
                                 end
                                 8'h95: begin             // [10-17] 神经网络识别结果回读
-                                    dbg_nn <= 1'b1;
-                                end
-                                8'h95: begin
                                     dbg_nn <= 1'b1;
                                 end
                                 8'h94: begin             // [10-17] 状态回读(0 字节负载)

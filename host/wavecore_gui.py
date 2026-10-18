@@ -690,11 +690,8 @@ class WaveCoreApp:
         self.wave_src_box.grid(row=10, column=1, columnspan=2, padx=4, pady=(8, 0), sticky="w")
         self.wave_src_box.bind("<<ComboboxSelected>>", self.on_wave_src_changed)
 
-        ttk.Button(controls, text="读取结果", command=self.read_wave_result).grid(
-            row=10, column=3, padx=4, pady=(8, 0)
-        )
         ttk.Label(controls, textvariable=self.wave_src_info_var).grid(
-            row=10, column=4, columnspan=6, padx=(12, 0), pady=(8, 0), sticky="w"
+            row=10, column=3, columnspan=7, padx=(12, 0), pady=(8, 0), sticky="w"
         )
 
         ttk.Label(
@@ -1272,36 +1269,23 @@ class WaveCoreApp:
         )
 
     def on_wave_src_changed(self, event=None):
-        """下拉框一改就切换识别来源（0x96）。
+        """下拉框一改就切换识别来源（0x96），并立刻要一帧结果。
 
-        两条通路（规则法 / 神经网络）**始终在跑**，本命令只决定
+        两条通路（规则法 / 神经网络）**始终在跑**，0x96 只决定
         `TY=` 行上报哪一路。默认规则法，与升级前完全一致。
+
+        ★ 切换后必须**主动请求一帧**（0x83 波形请求同时带测量行）。
+          否则 TY 行要等下一次请求才刷新，界面上看着像"切了没反应" ——
+          这一点是用户实测反馈后才发现的。
         """
         use_nn = self.wave_src_var.get().startswith("神经网络")
         if not self._send(command_set_ty_source(use_nn),
                           "已切换到%s" % ("神经网络" if use_nn else "规则法")):
             return
+        # 立刻要一帧，让 TY 行按新来源刷新
+        self._send(command_request_waveform(), "已切换识别来源，正在刷新一帧")
         self.wave_src_info_var.set(
-            "来源：%s —— TY 行%s刷新（约 20ms）"
-            % ("神经网络" if use_nn else "规则法", "下次测量" )
-        )
-
-    def read_wave_result(self):
-        """读取当前识别结果。
-
-        规则法：结果就在 TY 行里，随测量自动上报，这里只是提示去看卡片。
-        神经网络：另发 0x95，读回类别 + 两个最能区分波形的特征
-                  （占空比与峭度），便于判断它为什么这么判。
-        """
-        if self.wave_src_var.get().startswith("规则法"):
-            self.wave_src_info_var.set(
-                "规则法结果见上方「识别结果」卡片（TY 行自动上报）"
-            )
-            return
-        if not self._send(command_read_nn(), "已请求神经网络识别结果"):
-            return
-        self.wave_src_info_var.set(
-            "NN 结果见 TY 行 / 卡片；SF=70000X，1 正弦 2 方波 3 三角 4 其他"
+            "来源：%s（已刷新一帧）" % ("神经网络" if use_nn else "规则法")
         )
 
     def stop_ifft(self):
