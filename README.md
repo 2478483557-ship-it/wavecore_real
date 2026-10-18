@@ -5,7 +5,7 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 
 > 全国大学生嵌入式芯片与系统设计竞赛 2026 · FPGA 赛道（AMD）· 自主选题（初级组）
 >
-> **状态更新：2026-10-14** ｜ 串口 **460800-8N1** ｜ 协议 **v1.21** ｜ 演示视频已录制
+> **状态更新：2026-10-18** ｜ 串口 **460800-8N1** ｜ 协议 **v1.22**（命令 0x80~0x98）
 >
 > 全链路已上板验证 ✅ ｜ **已 Flash 固化（断电自启，无需 Vivado）**
 
@@ -54,8 +54,9 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 | 12 | **幅度谱帧 `0x8E`** | 512 点对数压缩幅度谱（518 B ≈ 11.2 ms）；上位机据此画**实时频谱 + 瀑布图** | 方波多柱 / 正弦单柱 / 扫频斜线，均正常 |
 | 13 | **扫频 `0x8B`** | 1k→20k，步进 100Hz，50ms/步，循环（约 9.5s/圈） | 瀑布图呈斜线 ✅ |
 | 14 | **波形上传 `0x83`** | 上传最近 **1024 点**波形；支持触发对齐与预触发回退 | PC 画出 1kHz 波形 ✅ |
-| 15 | **资源与时序** | **LUT 7063 (33.96%) / FF 7355 (17.68%) / BRAM 11 (22.0%) / DSP 35 (38.89%)**；**WNS +1.607 ns**、WHS +0.048 ns，0 布线错误 | 资源攻坚前 LUT 曾 **100.14% 超容**（见下） |
+| 15 | **资源与时序** | **LUT 7358 (35.38%) / FF 6521 (15.68%) / BRAM 11 (22.0%) / DSP 38 (42.22%)**；**WNS +1.552 ns**、WHS +0.041 ns，**0 失败端点** | 资源攻坚前 LUT 曾 **100.14% 超容**（见下） |
 | 16 | **Flash 固化** | `.mcs` 写入板载 Flash，**断电重启即用**，现场不依赖电脑 | 断电复验 `V=5013`（偏差 0.73%）✅ |
+| 17 | **扩展功能组 `0x90~0x98`** | 窗函数三档 / 50% 帧重叠 / **IFFT 频域滤波** / DAC 回放 / 状态回读 / **神经网络识别** / 来源切换 / **自适应选窗** / **谱平均 8 帧** | 底噪 81.6→25.6；谱帧 35→24ms；自研谱主峰 976→4997（误差<0.1%）；NN 定点 **91.3%**（其他类 86.7%）；谱平均 **−4.5dB** |
 
 ## 工程亮点（评审视角）
 
@@ -143,17 +144,19 @@ wavecore/
 │   ├── fft_demo / fft_report / hann_rom                    # 厂商 IP 4096 点通路
 │   ├── self_fft_1024 / twiddle_rom                         # 自研 1024 点通路（Hann + 插值）
 │   ├── spec_compress / spec_buf / spec_frame               # 0x8E 幅度谱帧
+│   ├── spec_avg                                           # 0x98 幅度谱 8 帧平均
+│   ├── wave_feat / wave_nn                                # 0x95 特征提取 + 6-16-4 神经网络
 │   ├── wave_frame             # 波形上传 + 触发 + 预触发
 │   ├── timebase               # 0x8D 时基档位
 │   ├── cmd_decoder            # 命令解析（含 KN_DEF 标定默认值）
 │   └── uart_tx / uart_rx / uart_mirror / bin2bcd
 ├── build/             # 构建与烧写脚本（create_project / reset_and_build / gen_mcs / program_flash）
 ├── sim/               # 仿真：fft_check(6 场景+11 项 0x8E 检查) / mv_check / fft_demo_check / board_elab
-├── board/             # XDC、引脚表、串口协议 v1.21、复验清单、flash_guide
+├── board/             # XDC、引脚表、串口协议 v1.22、复验清单、flash_guide
 ├── host/              # 上位机：protocol.py + 一键工具（队友1 工位）
 ├── hw_analysis/       # 验证脚本与数值金标准（probe_interp / verify_hann_window / check_protocol_frames …）
 ├── stm32/             # STM32+串口屏 资料归档（方案已取消）
-├── skill/             # 技能包 SK-001~038（抗噪/触发/FFT四坑/固化/资源判读/文档一致性/位宽溢出等）
+├── skill/             # 技能包 SK-001~068（抗噪/触发/FFT四坑/固化/量化定标/时序/文档一致性等）
 └── report/            # 设计报告 / 演示材料包 / 精度标定 / 进度 / LLM 协作记录 / 验证记录
 ```
 
@@ -192,7 +195,7 @@ wavecore/
 - **精度标定**：`report/accuracy_calibration.md`
 - **工程问题复盘**：`report/engineering_challenges.md`（12 个真实案例）
 - **LLM 协作记录**：`report/llm_collab_log.md`
-- **技能包（踩坑总结）**：`skill/README.md`（SK-001~038）
+- **技能包（踩坑总结）**：`skill/README.md`（**SK-001~068**，68 条）
 
 ## License
 
