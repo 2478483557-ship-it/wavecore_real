@@ -303,6 +303,10 @@ class WaveCoreApp:
         self.duty_var = tk.StringVar(value="-- %")
         self.pulse_width_var = tk.StringVar(value="-- us")
         self.detected_waveform_var = tk.StringVar(value="--")
+        # [10-18] 波形识别来源与结果说明
+        self.wave_src_info_var = tk.StringVar(
+            value="来源：规则法（TY 行随测量自动上报）"
+        )
         self.self_fft_var = tk.StringVar(value="-- / -- / -- Hz")
         self.main_frequency_var = tk.StringVar(value="1000")
         self.second_frequency_var = tk.StringVar(value="1100")
@@ -427,7 +431,7 @@ class WaveCoreApp:
         self._measurement_card(measurements, 3, "FFT第二峰 A", self.peak_a_var)
         self._measurement_card(measurements, 0, "占空比 D", self.duty_var, row=1)
         self._measurement_card(measurements, 1, "脉宽 W", self.pulse_width_var, row=1)
-        self._measurement_card(measurements, 2, "波形识别 TY", self.detected_waveform_var, row=1)
+        self._measurement_card(measurements, 2, "识别结果", self.detected_waveform_var, row=1)
         self._measurement_card(measurements, 3, "自研FFT SF/S2/S3", self.self_fft_var, row=1)
 
         controls = ttk.LabelFrame(self.root, text="信号与采集控制", padding=(10, 7))
@@ -661,32 +665,42 @@ class WaveCoreApp:
         )
         self.ifft_stop_button.grid(row=8, column=4, padx=4, pady=(6, 0))
 
-        # [10-17] 神经网络识别: 发 0x95, 回 SF=70000X / S2=占空比 / S3=峭度
-        self.nn_button = ttk.Button(
-            controls, text="NN 识别", command=self.read_nn
-        )
-        self.nn_button.grid(row=8, column=6, padx=4, pady=(6, 0))
-
-        # [10-17] 识别来源切换: TY 行用规则法还是神经网络
-        self.ty_src_var = tk.StringVar(value="规则法")
-        ttk.Combobox(
-            controls, textvariable=self.ty_src_var,
-            values=("规则法", "神经网络"), state="readonly", width=9,
-        ).grid(row=8, column=8, padx=(8, 0), pady=(6, 0))
-        ttk.Button(controls, text="切换", command=self.apply_ty_source).grid(
-            row=8, column=9, padx=4, pady=(6, 0)
-        )
         ttk.Checkbutton(
             controls, text="DAC 回放", variable=self.play_var, command=self.toggle_play
         ).grid(row=8, column=5, columnspan=1, padx=4, pady=(6, 0), sticky="w")
         ttk.Label(controls, textvariable=self.ifft_info_var).grid(
-            row=8, column=7, columnspan=2, padx=(12, 0), pady=(6, 0), sticky="w"
+            row=8, column=6, columnspan=4, padx=(12, 0), pady=(6, 0), sticky="w"
+        )
+
+        # ===== [10-18] 波形识别：独立一区 =====
+        #   原来 NN 的按钮和来源下拉都挤在"频域滤波"那一行（row=8），
+        #   跟 IFFT 的功能混在一起，界面上看不出这是"另一种识别方式"。
+        #   现在单独一区：左边选来源，右边读结果。
+        ttk.Separator(controls, orient="horizontal").grid(
+            row=9, column=0, columnspan=10, sticky="ew", pady=(10, 0)
+        )
+        ttk.Label(controls, text="波形识别：").grid(row=10, column=0, pady=(8, 0))
+
+        self.wave_src_var = tk.StringVar(value="规则法 (TY)")
+        self.wave_src_box = ttk.Combobox(
+            controls, textvariable=self.wave_src_var,
+            values=("规则法 (TY)", "神经网络 (NN)"),
+            state="readonly", width=15,
+        )
+        self.wave_src_box.grid(row=10, column=1, columnspan=2, padx=4, pady=(8, 0), sticky="w")
+        self.wave_src_box.bind("<<ComboboxSelected>>", self.on_wave_src_changed)
+
+        ttk.Button(controls, text="读取结果", command=self.read_wave_result).grid(
+            row=10, column=3, padx=4, pady=(8, 0)
+        )
+        ttk.Label(controls, textvariable=self.wave_src_info_var).grid(
+            row=10, column=4, columnspan=6, padx=(12, 0), pady=(8, 0), sticky="w"
         )
 
         ttk.Label(
             controls,
             textvariable=self.applied_settings_var,
-        ).grid(row=9, column=0, columnspan=9, pady=(6, 0), sticky="w")
+        ).grid(row=11, column=0, columnspan=10, pady=(6, 0), sticky="w")
 
         self.plot_notebook = ttk.Notebook(self.root)
         self.plot_notebook.grid(row=3, column=0, sticky="nsew", padx=12, pady=(4, 10))
@@ -1257,31 +1271,37 @@ class WaveCoreApp:
             "选窗：%s" % ("自适应（按频偏自动选）" if auto else "手动（按下面的下拉框）")
         )
 
-    def apply_ty_source(self):
-        """切换 TY= 行的识别来源（0x96）。
+    def on_wave_src_changed(self, event=None):
+        """下拉框一改就切换识别来源（0x96）。
 
-        两条通路并行运行，本命令只决定报哪一路。
-        编码已在硬件内部互换，所以 TY= 的语义在两种来源下一致。
-        这是本作品"同一功能两种实现"的直接对比手段。
+        两条通路（规则法 / 神经网络）**始终在跑**，本命令只决定
+        `TY=` 行上报哪一路。默认规则法，与升级前完全一致。
         """
-        use_nn = (self.ty_src_var.get() == "神经网络")
-        if not self._send(command_set_ty_source(use_nn), "已切换识别来源"):
+        use_nn = self.wave_src_var.get().startswith("神经网络")
+        if not self._send(command_set_ty_source(use_nn),
+                          "已切换到%s" % ("神经网络" if use_nn else "规则法")):
             return
-        self.ifft_info_var.set(
-            "TY 行改用%s —— 同一信号下可与另一路对照" % ("神经网络" if use_nn else "规则法")
+        self.wave_src_info_var.set(
+            "来源：%s —— TY 行%s刷新（约 20ms）"
+            % ("神经网络" if use_nn else "规则法", "下次测量" )
         )
 
-    def read_nn(self):
-        """读取神经网络识别结果（0x95）。
+    def read_wave_result(self):
+        """读取当前识别结果。
 
-        板上网络与规则法并行运行, 特征是连续统计的, 随时可读。
-        回三行: SF=700000+类别 / S2=占空比 / S3=峭度。
-        类别: 1=正弦 2=方波 3=三角 4=其他。
+        规则法：结果就在 TY 行里，随测量自动上报，这里只是提示去看卡片。
+        神经网络：另发 0x95，读回类别 + 两个最能区分波形的特征
+                  （占空比与峭度），便于判断它为什么这么判。
         """
+        if self.wave_src_var.get().startswith("规则法"):
+            self.wave_src_info_var.set(
+                "规则法结果见上方「识别结果」卡片（TY 行自动上报）"
+            )
+            return
         if not self._send(command_read_nn(), "已请求神经网络识别结果"):
             return
-        self.ifft_info_var.set(
-            "NN: 看 SF 行 —— 700001=正弦 700002=方波 700003=三角 700004=其他"
+        self.wave_src_info_var.set(
+            "NN 结果见 TY 行 / 卡片；SF=70000X，1 正弦 2 方波 3 三角 4 其他"
         )
 
     def stop_ifft(self):

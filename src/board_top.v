@@ -216,7 +216,7 @@ wire [1:0]  ty_show;          // 最终送给 TY= 行的类别
 // 规则法原生编码: 0=方波 1=正弦 2=三角 3=其他
 // 神经网络编码:   0=正弦 1=方波 2=三角 3=其他
 //   -> 选 NN 时要把 0/1 互换, 才能让 TY= 行保持同一套语义
-wire [1:0]  nn_as_ty = {nn_cls_r[1], nn_cls_r[0] ^ nn_cls_r[1]};
+wire [1:0]  nn_as_ty = {nn_cls_r[1], ~(nn_cls_r[0] ^ nn_cls_r[1])};
 assign ty_show = ty_src_sel_w ? nn_as_ty : wave_type_w;
 // 0x94/0x95 共用同一条上报通路, 用这个标志选数据源
 reg         dbg_is_nn;
@@ -394,7 +394,7 @@ reg         dbg_req_d;
         .vpp        (meas_vpp   ),
         .meas_done2 (meas_done2 ),
         .duty_x10   (meas_duty  ),
-        .wave_type  (wave_type_w),
+        .wave_type  (ty_show     ),   // [10-18 修复] 这里原来接 wave_type_w, 但被下面 wave_id 改接到 ty_show 后, 该线无人驱动 -> 综合成 0 -> TY 恒为"方波"
         .width_us   (meas_wid   ),
         .uart_txd   (m_txd      ),
         .meas_busy  (m_busy     ),
@@ -474,7 +474,7 @@ reg         dbg_req_d;
         .clk      (sys_clk    ),
         .rst_n    (sys_rst_n  ),
         .ad_cap   (ad_cap     ),
-        .wave_type(ty_show)
+        .wave_type(wave_type_w)               // 规则法原始结果(0=方波 1=正弦 2=三角 3=其他)
     );
 
     // ---- 3.12 自研FFT(F4 复活版, 2026-09-17): 1024点 DIF, 0x8A 按需, SF= 行 ----

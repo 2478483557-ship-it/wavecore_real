@@ -1316,3 +1316,34 @@ end
   信号变化时输出跟不上（表现为"黏住"旧值）。
 - **来源**：WaveCore 2026-10-18
 
+## SK-056 · `replace(..., 1)` 改代码：你以为改的是 A，其实改的是 B
+
+- **事故**：给 `board_top` 加 0x96 识别来源切换时，要做的改动是
+  "把 `measure_report` 的 `.wave_type(wave_type_w)` 改成 `.wave_type(ty_show)`"。
+  我用 `t.replace("        .wave_type(wave_type_w)", "...", 1)` ——
+  **只替换第一处**。但文件里有两处形似的连接：
+  ```
+  measure_report ... .wave_type  (wave_type_w)     ← 两个空格
+  wave_id        ... .wave_type(wave_type_w)       ← 一个空格
+  ```
+  正则/字符串匹配命中的是 `wave_id` 那行（它的写法与我的模式完全一致），
+  于是 **wave_id 的输出被改接到 `ty_show`**，`measure_report` 仍读 `wave_type_w`。
+- **后果**：`wave_type_w` 没人驱动 → 综合接常量 0 →
+  **TY 恒显示"方波"**（2kHz 正弦也报方波）；同时 `ty_show` 被 `assign`
+  和模块输出**双驱动**。两者都不报 ERROR，上板才暴露。
+- **规矩**：
+  1. `replace(..., 1)` 用在**形似但语义不同**的多处代码上非常危险。
+     改之前先 `grep -n` 看清有几处、各自属于哪个例化。
+  2. 更稳的做法：**带上上下文**一起匹配
+     （如 `".duty_x10   (meas_duty  ),\n        .wave_type  ("`），
+     或者干脆按行号改。
+  3. 改完跑 `check_wire_drivers.py`：它会报"多驱动"。
+- **工具**：`hw_analysis/check_wire_drivers.py`
+  解析每个模块的 output 端口集合，统计每根 wire 的驱动源
+  （`assign` / 模块输出端口 / `always`），**多驱动直接报错**。
+  实测这条能抓住上述事故（`ty_show <- assign, wave_id(u_wid).wave_type`）。
+- **附带**：写这个检查器时我也踩了两次 ——
+  一开始把"本模块的 input 端口"和 `wire x = ...` 内联赋值都算成"悬空"，
+  误报刷屏；收紧到只查"多驱动"后才可用。**检查器本身也要先验证不会误报。**
+- **来源**：WaveCore 2026-10-18（用户上板发现"2kHz 正弦被识别成方波"）
+
