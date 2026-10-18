@@ -1310,10 +1310,16 @@ class WaveCoreApp:
         )
 
     def apply_ifft(self):
-        """发送 0x92 频域滤波：掩掉 [lo, hi] 及其镜像 bin。
+        """一键完成频域滤波：0x8A 跑正向 FFT -> 等它跑完 -> 0x92 掩膜 + 反向变换。
 
-        前置条件：已经跑过一次自研 FFT（0x8A）——反向变换是在**上一帧的频谱**上做的。
-        掩膜要给带宽，不要只给一根谱线（加窗会展宽 ±1 bin）。
+        ★ 为什么必须三步
+          - 0x8A 之后 mem 里是**频谱**
+          - 0x92 之后 mem 里才是**时域波形**
+          - 0x93 回放读的是 mem
+        少了 0x92 就开回放，等于把频域数据当场放出来 —— 示波器上就是"一堆毛刺"。
+        原来这里只发 0x92，没先跑 0x8A，是演示失败的直接原因。
+
+        掩膜要给带宽，不要只给一根谱线（加窗会展宽 ±2 bin）。
         """
         try:
             lo = int(self.mask_lo_var.get())
@@ -1322,11 +1328,35 @@ class WaveCoreApp:
         except (ValueError, tk.TclError) as error:
             messagebox.showerror("频域滤波参数错误", str(error))
             return
-        if not self._send(frame, "已发送 IFFT 频域滤波命令"):
+        if not self.connected:
+            messagebox.showwarning("串口未连接", "请先连接FPGA串口")
             return
-        self.ifft_info_var.set(
-            "掩膜 bin %d~%d（含镜像）已下发｜勾选 DAC 回放可在示波器看波形" % (lo, hi)
-        )
+        if lo >= hi:
+            messagebox.showerror("掩膜范围错误", "起始 bin 必须小于结束 bin")
+            return
+
+        # 第 1 步：跑一次正向 FFT（采集 + 蝶形 + 找峰），让 mem 里有一帧频谱
+        if not self._send(command_run_self_fft(), "第 1/3 步：采集并跑正向 FFT…"):
+            return
+        self.ifft_info_var.set("1/3 正向 FFT 运行中…（约 0.3 秒）")
+
+        # 第 2 步：等 FFT 跑完再发 0x92。
+        #   0x8A 需要采 1024 点 + 10 级蝶形，T1 时约 20ms 采集；
+        #   留 400ms 余量，避免 0x92 早到（那时 mem 还没写完，反向会跑在旧数据上）。
+        def _step2():
+            self._send(frame, "第 2/3 步：掩膜 bin %d~%d 并反向变换…" % (lo, hi))
+            self.ifft_info_var.set(
+                "2/3 反向变换中…（约 0.3 秒）"
+            )
+            self.root.after(400, _step3)
+
+        # 第 3 步：提示下一步
+        def _step3():
+            self.ifft_info_var.set(
+                "3/3 完成 → 勾选「DAC 回放」；示波器接 DA 输出（探头×1，2V/格）"
+            )
+
+        self.root.after(400, _step2)
 
     def toggle_play(self):
         """发送 0x93：把 IFFT 的时域结果循环送 DAC。

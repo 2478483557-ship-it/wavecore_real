@@ -40,8 +40,7 @@ module self_fft_1024 #(
     output wire        busy,         // [0x8E] 运行中(采集/蝶形/扫描), 供 spec_frame 等待
     output wire [3:0]  dbg_st,       // [调试] 当前状态(0~13)
     // [10-17 新增] 0x94 状态回读用的三个值(打包成 24 位, 由 self_fft_report 以 SF/S2/S3 发出)
-    //   SF = 0xD00000 | {状态机4位, play_en, inv_done, inv_pend, inv_mode, 32位计数高位}
-    //   S2 = da_play 当前值(0..255)      S3 = play_idx(回放到第几个点)
+    //     （旧的 0xD00000 编码方案已废弃, 会超出上报的 7 位数字; 现用下面这套:）
     output wire [23:0] dbg_rd1,
     output wire [23:0] dbg_rd2,
     output wire [23:0] dbg_rd3,
@@ -190,6 +189,11 @@ module self_fft_1024 #(
     reg  signed [19:0] play_c;
     reg  inv_done;   // 反向变换是否已跑完过(mem 里现在是不是"时域波形")
     reg  inv_pend;   // inv_run 只有 1 拍; 若 FSM 当时不在 S_CAP 就丢了 -> 先锁存
+    // [10-18] 回放有效标志: mem 里到底是不是"时域波形"。
+    //   0x8A 跑正向 FFT 后 mem 是**频谱**, 0x92 跑完反向才是**时域**。
+    //   原来不区分, 直接开 0x93 会把频谱当波形放出来 —— 看上去就是"一堆毛刺",
+    //   而且像坏了。改用: 没跑过反向就输出中值(静音), 不误导。
+    reg  play_valid;
 
     //======== [10-17] 0x94 状态回读的三个值 ========
     //   打包成 24 位, 由 self_fft_report 直接当作 SF/S2/S3 三行发出去。
@@ -422,7 +426,7 @@ module self_fft_1024 #(
             //   综合后互相打架, 实测表现为**恒为 0**, 于是 0x92 的请求永远进不来,
             //   反向变换从设计之初在板上就一次也没跑过。
             //   inv_done / inv_mode 只在本块里赋值, 留在这里是对的。
-            inv_mode<=1'b0; inv_done<=1'b0; play_idx<=10'd0; play_g<=20'sd0; play_c<=20'sd0;
+            inv_mode<=1'b0; inv_done<=1'b0; play_valid<=1'b0; play_idx<=10'd0; play_g<=20'sd0; play_c<=20'sd0;
             da_play<=8'd128;                     // [10-16] IFFT: 必须复位! 否则正向通路的
                                                   //   `inv_mode ? rev10(..) : ..` 地址选择会是 X
             ar<=0;ai<=0;br<=0;bi<=0;cr<=0;ci<=0;
@@ -451,6 +455,7 @@ module self_fft_1024 #(
                 end
                 else begin
                     cap_on <= 1'b1;
+                    play_valid <= 1'b0;   // [10-18] 新一帧正向采集 -> mem 将变成频谱
                     dcnt   <= 32'd0;
                     wr_idx <= 10'd0;
                     cnt_wr <= 11'd0;      // [调试] 清体检计数
@@ -565,7 +570,7 @@ module self_fft_1024 #(
                                   : (((($signed(dout[31:16])) <<< 1) + $signed(dout[31:16])) < -20'sd128
                                      ? -20'sd128
                                      : (($signed(dout[31:16])) <<< 1) + $signed(dout[31:16]));
-                        da_play <= play_c[7:0] + 8'd128;   // 补码 -> 偏置二进制
+                        da_play <= play_valid ? (play_c[7:0] + 8'd128) : 8'd128;   // [10-18] 未跑反向 -> 静音
                         if (play_idx == 10'd1023) play_idx <= 10'd0;
                         else                      play_idx <= play_idx + 10'd1;
                     end
@@ -651,7 +656,7 @@ module self_fft_1024 #(
                         else begin
                             blk <= 0; base <= 0;
                             if (stage==4'd9 && inv_mode) begin   // [10-16] 反向跑完
-                                inv_mode <= 1'b0; inv_done <= 1'b1;
+                                inv_mode <= 1'b0; inv_done <= 1'b1;  play_valid <= 1'b1;   // [10-18] mem 现在是时域, 可回放
                                 if (play_en) begin              // 有回放请求 -> 进回放态
                                     play_idx <= 10'd0; dcnt <= 32'd0; st <= S_PLAY;
                                 end
