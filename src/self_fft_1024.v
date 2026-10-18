@@ -22,6 +22,7 @@ module self_fft_1024 #(
     input  wire [31:0] decim_cfg,    // [0x8D] 时基抽取比(0 = 用参数 DECIM)
     input  wire [31:0] fs_cfg,       // [0x8D] 等效采样率 Hz(0 = 用 50000)
     input  wire [1:0]  win_cfg,      // [0x90] 窗函数: 0=矩形 1=Hann 2=Blackman  (10-16 新增)
+    input  wire        win_auto,     // [10-18] 自适应: 1=按频偏自动选窗(覆盖 win_cfg)
     input  wire        ovl_en,       // [0x91] 50% 帧重叠: 0=原行为(1024点全新采集) 1=重叠  (10-16 新增)
     input  wire        inv_run,      // [0x92] IFFT 频域滤波: 在已完成的正向 FFT 上再跑一趟反向  (10-16 新增)
     input  wire [9:0]  mask_lo,      // [0x92] 掩膜低 bin(含)
@@ -114,8 +115,16 @@ module self_fft_1024 #(
     // [10-17 记录] 矩形窗(0) 在**正向频谱**里工作正常, 但用在 IFFT 重建路径上会出问题：
     //   实测 dump 出来的时域是噪声(主峰跑到 bin 256/384), 改增益(32767/16384)也无改善。
     //   因此**做频域滤波+回放时请保持 Hann 窗**, 代价是重建波形带 Hann 包络(见下)。
-    wire [15:0] win_w = (win_cfg == 2'd0) ? 16'd32768 :
-                        (win_cfg == 2'd2) ? win_black : win_hann;
+    // ===== [10-18 自适应窗] =====
+    // 判据: 峰值偏离整数 bin 的程度 |delta|(Q8, 单位 1/256 bin)。
+    //   越接近整数 bin( |delta| 小), 矩形窗的泄漏越小、且不损失频率精度 -> 用矩形;
+    //   偏离多时矩形泄漏严重 -> 用 Hann 压泄漏。
+    // 这样"自适应频谱"才是真的自适应, 而不是让人手选。
+    // 阈值 0.15 bin = 38/256: 矩形窗在该偏移下旁瓣已明显抬高, 再大就该加窗。
+    reg        win_auto_pick;        // 1=本轮自动判定选 Hann
+    wire [1:0] win_cfg_eff = win_auto ? {1'b0, win_auto_pick} : win_cfg;
+    wire [15:0] win_w = (win_cfg_eff == 2'd0) ? 16'd32768 :
+                        (win_cfg_eff == 2'd2) ? win_black : win_hann;
 
     wire signed [7:0]  win_s    = ad_cap ^ 8'h80;                    // 中点归零补码(同 09-28 映射修复)
     wire signed [23:0] win_p    = win_s * $signed({1'b0, win_w});    // 8b x 16b, 24 位有符号
@@ -389,6 +398,7 @@ module self_fft_1024 #(
             ar<=0;ai<=0;br<=0;bi<=0;cr<=0;ci<=0;
             p_rr<=0;p_ii<=0;p_ri<=0;p_ir<=0;
             res_freq<=0; res_done<=0; pk_addr<=0; pk_best<=0; pk_bin<=0; scan<=2'd0;
+            win_auto_pick<=1'b0;
             nb_addr<=10'd0; nb_go<=1'b0; ip_pk<=2'd0; ic_ph<=2'd0;
             n_a0<=0;n_b0<=0;n_c0<=0; n_a1<=0;n_b1<=0;n_c1<=0; n_a2<=0;n_b2<=0;n_c2<=0;
             ic_a<=0;ic_b<=0;ic_c<=0; ic_bin<=10'd0; ic_val<=1'b0; ic_ok<=1'b0;
@@ -735,6 +745,8 @@ module self_fft_1024 #(
                                 endcase
                             end
                             else begin                            // 插值结果(负数截 0)
+                                // [10-18] 主峰(ip_pk==0)的 |delta| 存下来, 供下一帧自动选窗
+                                if (ip_pk == 2'd0) win_auto_pick <= (ic_q >= 8'd38);   // 38/256 = 0.148 bin
                                 case (ip_pk)
                                     2'd1: res_f2   <= ic_f[39] ? 24'd0 : ic_f[23:0];
                                     2'd2: res_f3   <= ic_f[39] ? 24'd0 : ic_f[23:0];

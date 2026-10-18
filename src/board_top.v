@@ -210,6 +210,7 @@ wire        nf_tick = (nf_dcnt >= tb_decim_w - 32'd1);
 wire        dbg_nn_w;      // 0x95 触发脉冲
 // [10-17] 识别来源切换: 0=TY 规则法(默认, 与升级前一致) 1=神经网络
 wire        ty_src_sel_w;
+wire        win_auto_w;      // [0x97] 自适应选窗
 wire [1:0]  ty_show;          // 最终送给 TY= 行的类别
 // 规则法原生编码: 0=方波 1=正弦 2=三角 3=其他
 // 神经网络编码:   0=正弦 1=方波 2=三角 3=其他
@@ -483,6 +484,7 @@ reg         dbg_req_d;
         .decim_cfg(tb_decim_w),
         .fs_cfg   (tb_fs_w   ),
         .win_cfg  (win_cfg_w ),
+        .win_auto (win_auto_w),   // [0x97] 自适应选窗
         .ovl_en   (ovl_en_w  ),   // [0x91] 50% 帧重叠
         .play_en  (play_en_w ),   // [0x93] IFFT 结果回放
         .da_play  (da_play_w ),

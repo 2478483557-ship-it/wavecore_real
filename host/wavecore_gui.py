@@ -39,6 +39,7 @@ from protocol import (
     command_play_ifft,       # [0x93] IFFT 结果 DAC 回放  [10-16]
     command_read_nn,         # [0x95] 神经网络识别结果  [10-17]
     command_set_ty_source,   # [0x96] 识别来源切换  [10-17]
+    command_set_win_auto,    # [0x97] 自适应选窗  [10-18]
 )
 
 
@@ -613,8 +614,13 @@ class WaveCoreApp:
         ttk.Button(controls, text="应用窗函数", command=self.apply_window).grid(
             row=6, column=2, padx=4, pady=(6, 0)
         )
+        self.win_auto_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            controls, text="自适应选窗", variable=self.win_auto_var,
+            command=self.apply_win_auto,
+        ).grid(row=6, column=4, columnspan=2, padx=(12, 0), pady=(6, 0), sticky="w")
         ttk.Label(controls, textvariable=self.window_info_var).grid(
-            row=6, column=3, columnspan=6, padx=(12, 0), pady=(6, 0), sticky="w"
+            row=6, column=3, columnspan=1, padx=(12, 0), pady=(6, 0), sticky="w"
         )
 
         # ---- 行7: 帧重叠 (v1.22, 0x91) ----
@@ -1214,6 +1220,22 @@ class WaveCoreApp:
             return
         self.overlap_info_var.set(
             "50% 重叠：帧间无信号空白、刷新率约翻倍" if on else "整帧采集（默认，与升级前一致）"
+        )
+
+    def apply_win_auto(self):
+        """开关自适应选窗（0x97）。
+
+        打开后硬件看主峰偏离整数 bin 的程度 |delta| 自己选窗：
+          |delta| < 0.15 bin -> 矩形（主瓣最窄，频率精度高）
+          |delta| >= 0.15 bin -> Hann（压泄漏）
+        delta 就是插值本来就在算的量，不额外增加运算。
+        关掉则完全按"应用窗函数"的手动档位走，与升级前一致。
+        """
+        auto = self.win_auto_var.get()
+        if not self._send(command_set_win_auto(auto), "已切换选窗方式"):
+            return
+        self.window_info_var.set(
+            "选窗：%s" % ("自适应（按频偏自动选）" if auto else "手动（按下面的下拉框）")
         )
 
     def apply_ty_source(self):

@@ -216,6 +216,23 @@ def timebase_fs_hz(tier: int) -> float:
     return float(TIMEBASE_SAMPLE_RATES[tier])
 
 
+def command_set_win_auto(auto: bool) -> bytes:
+    """
+    生成 0x97 自适应选窗命令（协议 v1.22, 2026-10-18 新增）。
+
+    auto=False -> 手动（上电默认，按 0x90 选，行为与升级前一致）
+    auto=True  -> 按主峰偏离整数 bin 的程度自动选窗
+
+    判据（硬件内部）：|delta| < 0.15 bin 用矩形（主瓣最窄，频率精度高）；
+                      |delta| >= 0.15 bin 用 Hann（压泄漏）。
+    delta 就是抛物线插值算出的偏移量，不额外增加运算。
+
+    注意：判据取自上一帧，切换有一帧（约 20ms）延迟。
+    这也是本作品"自适应频谱"名副其实的关键一条。
+    """
+    return build_command(0x97, bytes([1 if auto else 0]))
+
+
 def command_set_ty_source(use_nn: bool) -> bytes:
     """
     生成 0x96 识别来源切换命令（协议 v1.22, 2026-10-17 新增）。

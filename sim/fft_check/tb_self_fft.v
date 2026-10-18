@@ -82,7 +82,8 @@ module tb_self_fft;
 
     always #10 clk = ~clk;                       // 20ns 周期 = 50MHz
 
-    reg [1:0] win_cfg = 2'd1;            // [10-16] 0=矩形 1=Hann 2=Blackman (默认 Hann, 保持既有回归不变)
+    reg [1:0] win_cfg = 2'd1;
+    reg       win_auto = 1'b0;      // [10-18] 自适应选窗: 回归里关掉, 保持既有判据不变            // [10-16] 0=矩形 1=Hann 2=Blackman (默认 Hann, 保持既有回归不变)
     reg       ovl_en  = 1'b0;            // [0x91] 50% 帧重叠 (默认关, 保证既有回归不变)
     reg [31:0] dec_cfg = 32'd0;          // [0x8D] 0=用参数 DECIM
     reg        inv_run  = 1'b0;          // [0x92] IFFT 反向通行脉冲
@@ -120,6 +121,7 @@ module tb_self_fft;
         .clk(clk), .rst_n(rst_n), .ad_cap(ad_cap), .run(run),
         .decim_cfg(dec_cfg), .fs_cfg(32'd0),   // [0x8D] 0 = 用参数(DECIM=1) / 50000
         .win_cfg(win_cfg),                   // [0x90] 窗函数运行时可切换
+        .win_auto(win_auto),                 // [10-18] 自适应选窗
         .ovl_en(ovl_en),                     // [0x91] 50% 帧重叠
         .inv_run(inv_run),                   // [0x92] IFFT 频域滤波
         .mask_lo(mask_lo),
@@ -810,6 +812,26 @@ module tb_self_fft;
             $display("  已写出 play_wave.txt (按 play_idx 变化逐点)");
             play_en = 1'b0;
             repeat (300) @(posedge clk);
+        end
+
+        $display("-------- [10-18] 自适应选窗: 频偏小用矩形, 频偏大用 Hann --------");
+        begin : auto_t
+            integer k2;
+            // 场景A: 整数 bin 附近的信号 -> 频偏小 -> 应选矩形(win_auto_pick=0)
+            // 场景B: 半个 bin 附近的信号 -> 频偏大 -> 应选 Hann(win_auto_pick=1)
+            // 做法: 直接用查表激励, 但把表换成"整 bin"与"半 bin"两种, 跑两次看 pick
+            win_auto = 1'b1;
+            for (k2 = 0; k2 < 2; k2 = k2 + 1) begin
+                sel = (k2 == 0) ? 3'd1 : 3'd4;   // 1=sin20(整bin) 4=sin20p5(半bin)
+                @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+                @(posedge res_done); repeat (10) @(posedge clk);
+                $display("    场景%0d: |delta| 判定 -> %0s",
+                         k2, u_dut.win_auto_pick ? "Hann" : "矩形");
+                // 断言: 整 bin 应选矩形(pick=0); 半 bin 应选 Hann(pick=1)
+                chk("自适应选窗: 整bin->矩形", u_dut.win_auto_pick == (k2 != 0));
+            end
+            win_auto = 1'b0;
+            repeat (20) @(posedge clk);
         end
 
         $display("=====================================================");
