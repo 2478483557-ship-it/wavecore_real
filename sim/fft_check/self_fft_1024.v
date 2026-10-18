@@ -206,8 +206,13 @@ module self_fft_1024 #(
     //   改成十进制友好编码, 保证 < 10^7(上报只有 7 位):
     //     SF = 500000 + st*1024 + 标志字节
     //     解码: 状态机 = (SF-500000)/1024, 标志 = (SF-500000)%1024 的二进制
-    //     bit5=play_valid  bit4=play_en  bit3=inv_done  bit2=inv_pend  bit1=inv_mode  bit0=cap_on
-    wire [7:0] dbg_flag = {2'd0, play_valid, play_en, inv_done, inv_pend, inv_mode, cap_on};
+    //     bit6=win_auto_pick(0=矩形 1=Hann)  bit5=play_valid  bit4=play_en
+    //     bit3=inv_done  bit2=inv_pend  bit1=inv_mode  bit0=cap_on
+    // [10-18] bit6 加入当前实际使用的窗: 0=矩形 1=Hann
+    //   自适应模式开着的时候, 这是唯一能"看见"它到底选了哪个窗的途径 ——
+    //   否则界面上分不出"Hann(手动)"和"Hann(自适应判定)"。
+    wire [7:0] dbg_flag = {1'b0, win_auto_pick, play_valid, play_en,
+                          inv_done, inv_pend, inv_mode, cap_on};
     wire [23:0] dbg_sf = 24'd500000 + {st, 10'd0} + {16'd0, dbg_flag};
     assign dbg_rd1 = dbg_sf;                         // 7 位以内, 不会溢出
     assign dbg_rd2 = {16'd0, da_play};              // 送 DAC 的当前样点(0..255)

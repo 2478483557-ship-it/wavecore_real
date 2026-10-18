@@ -1262,18 +1262,28 @@ class WaveCoreApp:
     def apply_win_auto(self):
         """开关自适应选窗（0x97）。
 
-        打开后硬件看主峰偏离整数 bin 的程度 |delta| 自己选窗：
-          |delta| < 0.15 bin -> 矩形（主瓣最窄，频率精度高）
+        硬件看主峰偏离整数 bin 的程度 |delta| 自己选窗：
+          |delta| < 0.15 bin -> 矩形（主瓣最窄、峰唯一）
           |delta| >= 0.15 bin -> Hann（压泄漏）
         delta 就是插值本来就在算的量，不额外增加运算。
-        关掉则完全按"应用窗函数"的手动档位走，与升级前一致。
+
+        ★ 看不出区别是正常的：
+          |delta| 在 0~0.5 bin 均匀分布，阈值 0.15 意味着约 70% 的情况选 Hann，
+          而 Hann 本来就是手动默认档 —— 所以大多数频率下"开了等于没开"。
+          想看它真的切换，把频率设成**整 bin**的：976 / 1953 / 4883 Hz
+          （整 bin = k x 48.828 Hz）。此时会选矩形，频谱从"3 根等高线"
+          变成"1 根高线 + 很矮的肩"。
+          想看它当前选了哪个窗：发 0x94，SF-500000 的 bit6（64）= 选了 Hann。
         """
         auto = self.win_auto_var.get()
         if not self._send(command_set_win_auto(auto), "已切换选窗方式"):
             return
-        self.window_info_var.set(
-            "选窗：%s" % ("自适应（按频偏自动选）" if auto else "手动（按下面的下拉框）")
-        )
+        if auto:
+            self.window_info_var.set(
+                "选窗：自适应（多数频率下判为 Hann，与默认相同；试 976 Hz 可看出切换）"
+            )
+        else:
+            self.window_info_var.set("选窗：手动（按下面的下拉框）")
 
     def on_wave_src_changed(self, event=None):
         """下拉框一改就切换识别来源（0x96），并立刻要一帧结果。
