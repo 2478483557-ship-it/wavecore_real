@@ -140,10 +140,58 @@ W2q, S2 = qw(W2)
 #   正解: 按**训练集上真实的激活范围**定标, 让 hq 填满 [0, Q]。
 h_tr = np.maximum((Xtr @ W1) + b1, 0)
 H_MAX = max(float(h_tr.max()), 1e-9)
-SH1 = max(int(round(np.log2(max(S1 * H_MAX, 1e-9)))), 0)   # 使 hq ~ Q/H_MAX * h
-SH2 = max(int(round(np.log2(max(S2, 1e-9)))), 0)
 b1q = np.round(b1 * Q / H_MAX).astype(int)
 b2q = np.round(b2 * Q).astype(int)
+
+# ===== [10-18 重训] SH1/SH2 由**验证集搜索**得到, 不再靠公式取整 =====
+# 原做法: SH1=round(log2(S1*H_MAX)), SH2=round(log2(S2))。
+#   问题一: SH2 只按 S2 定, 但权重项实际还带着 1/H_MAX 因子 —— 两者不匹配会让
+#           **输出层偏置相对被放大 H_MAX 倍**(实测 H_MAX=4.55), 类别判决被系统性压低。
+#           "其他"类因此从浮点的 99.8% 掉到 66%。
+#   问题二: 纯公式取整误差大(log2 后取整, 2^误差可达 40%), 而这两个值只有离散几档,
+#           不如直接在验证集上搜。
+#   问题三: 累加器位宽。RTL 用 **40 位有符号**累加, 上限 ±5.5e11;
+#           最大可能值 16*32767*32767 = 1.7e10, 远未触及 —— 所以**不设溢出约束**。
+#           (我一开始按 int32 的 2.15e9 设了限制, 那是错把软件模拟的位宽当成硬件位宽,
+#            会白白排除掉更优的 SH1 取值。)
+ACC_LIM = 5.0e11          # 40 位累加器的实际安全线
+
+
+def _fwd(X, SH1, SH2):
+    xq = np.clip(np.round(X * Q), 0, Q).astype(np.int64)
+    a1 = xq @ W1q
+    hq = np.clip((a1 >> SH1) + b1q, 0, Q)
+    a2 = hq @ W2q
+    oq = (a2 >> SH2) + b2q
+    return np.argmax(oq, 1), np.abs(a1).max(), np.abs(a2).max()
+
+
+def pick_shifts(Xva, Yva):
+    """在验证集上搜索 (SH1, SH2)。
+
+    目标: 先看总准确率, 再看最差一类的准确率(避免"三类完美+一类崩")。
+    约束: 两层累加都不得达到 int32 上限。
+    """
+    best, best_key = None, None
+    for SH1 in range(12, 18):
+        for SH2 in range(8, 15):
+            pred, a1, a2 = _fwd(Xva, SH1, SH2)
+            if a1 >= ACC_LIM or a2 >= ACC_LIM:
+                continue                               # 溢出, 直接排除
+            per = [np.mean(pred[Yva == i] == i) for i in range(N_CLS)]
+            key = (round(float(np.mean(pred == Yva)), 4), round(float(min(per)), 4))
+            if best_key is None or key > best_key:
+                best_key, best = key, (SH1, SH2, per, a2)
+    return best
+
+
+# ===== [10-18] 在验证集上定 SH1/SH2（带溢出约束）=====
+Xva, Yva = make(120)
+SH1, SH2, per_va, acc2_max = pick_shifts(Xva, Yva)
+print('移位参数(验证集搜索): SH1=%d  SH2=%d' % (SH1, SH2))
+print('  验证集分类: ' + '  '.join('%s %.1f%%' % (n, 100*p)
+                                for n, p in zip(CLASS_NAMES, per_va)))
+print('  第二层累加峰值 %.2fe9（RTL 用 40 位累加，上限 550e9）' % (acc2_max / 1e9))
 
 
 def infer(X):

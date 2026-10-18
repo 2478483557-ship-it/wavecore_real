@@ -163,7 +163,7 @@ wave_feat u_nnfeat (
     .dbg_op  (          )
 );
 
-wave_nn #(.SH1(14), .SH2(12)) u_nn (
+wave_nn #(.SH1(14), .SH2(11)) u_nn (
     .clk   (sys_clk ),
     .rst_n (sys_rst_n),
     .start (nf_done ),

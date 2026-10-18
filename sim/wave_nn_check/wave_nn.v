@@ -11,7 +11,7 @@
 //===========================================================================
 module wave_nn #(
     parameter SH1 = 14,        // 层间移位(与 nn_meta.json 一致, 改权重必须同步改)
-    parameter SH2 = 12
+    parameter SH2 = 11
 )(
     input  wire        clk,
     input  wire        rst_n,
