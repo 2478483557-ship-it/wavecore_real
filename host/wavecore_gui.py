@@ -224,6 +224,26 @@ class SerialWorker:
         self._close_serial()
 
 
+def _fixed_label(parent, var, width, **kwargs):
+    """定宽只读标签：内容再长也不会把界面撑宽。
+
+    [10-18] 这是**模块级函数**, 不是类方法 —— 原因:
+      tt.Label(width=N) 的单位是"字符数", 内容超长也只是被截断显示,
+      不会让父容器重新计算更大的 requested width。
+      原来控制面板里的说明文字一变长(勾了自适应), 整个窗口就被撑宽,
+      用户看到的是"界面被拉开了"。现在所有会变的文字都走这里。
+    """
+    return ttk.Label(parent, textvariable=var, width=width, anchor="w", **kwargs)
+
+
+def _measurement_card(parent, column, title, variable, row=0):
+    """测量卡片。模块级函数（原 @staticmethod 在 Py3.8 类体内不能直接调用）。"""
+    card = ttk.LabelFrame(parent, text=title, padding=(10, 6))
+    card.grid(row=row, column=column, sticky="nsew", padx=4, pady=3)
+    ttk.Label(card, textvariable=variable, style="Value.TLabel").pack()
+    return card
+
+
 class WaveCoreApp:
     """WaveCore tkinter主界面。"""
 
@@ -365,6 +385,9 @@ class WaveCoreApp:
     def _configure_window(self):
         self.root.title("WaveCore FPGA上位机")
         self.root.geometry("1200x850")
+        # [10-18] 固定初始尺寸, 并且**不自动随内容缩放** ——
+        #   原来控制面板里的说明文字会变长(比如勾了自适应), 导致窗口被越撑越宽。
+        #   现在: 所有会变的文字都用 _fixed_label 定宽, 窗口尺寸也就稳定了。
         self.root.minsize(1000, 720)
 
     def _configure_styles(self):
@@ -432,17 +455,17 @@ class WaveCoreApp:
         for column in range(4):
             measurements.columnconfigure(column, weight=1)
 
-        self._measurement_card(measurements, 0, "测量频率 F", self.frequency_var)
-        self.vpp_card = self._measurement_card(
+        _measurement_card(measurements, 0, "测量频率 F", self.frequency_var)
+        self.vpp_card = _measurement_card(
             measurements, 1, "峰峰值 Vpp (mV)", self.vpp_var
         )
-        self._measurement_card(measurements, 2, "FFT主峰 S", self.peak_s_var)
-        self._measurement_card(measurements, 3, "FFT第二峰 A", self.peak_a_var)
-        self._measurement_card(measurements, 0, "占空比 D", self.duty_var, row=1)
-        self._measurement_card(measurements, 1, "脉宽 W", self.pulse_width_var, row=1)
-        self._measurement_card(measurements, 2, "识别结果", self.detected_waveform_var, row=1)
-        self._measurement_card(measurements, 3, "自研FFT SF/S2/S3", self.self_fft_var, row=1)
-        self._measurement_card(measurements, 0, "当前窗", self.win_used_var, row=2)
+        _measurement_card(measurements, 2, "FFT主峰 S", self.peak_s_var)
+        _measurement_card(measurements, 3, "FFT第二峰 A", self.peak_a_var)
+        _measurement_card(measurements, 0, "占空比 D", self.duty_var, row=1)
+        _measurement_card(measurements, 1, "脉宽 W", self.pulse_width_var, row=1)
+        _measurement_card(measurements, 2, "识别结果", self.detected_waveform_var, row=1)
+        _measurement_card(measurements, 3, "自研FFT SF/S2/S3", self.self_fft_var, row=1)
+        _measurement_card(measurements, 0, "当前窗", self.win_used_var, row=2)
 
         controls = ttk.LabelFrame(self.root, text="信号与采集控制", padding=(10, 7))
         controls.grid(row=2, column=0, sticky="ew", padx=12, pady=4)
@@ -639,7 +662,7 @@ class WaveCoreApp:
             controls, text="谱平均(8帧)", variable=self.spec_avg_var,
             command=self.apply_spec_avg,
         ).grid(row=6, column=6, columnspan=2, padx=(12, 0), pady=(6, 0), sticky="w")
-        ttk.Label(controls, textvariable=self.window_info_var).grid(
+        _fixed_label(controls, self.window_info_var, 22).grid(
             row=6, column=3, columnspan=1, padx=(12, 0), pady=(6, 0), sticky="w"
         )
 
@@ -649,7 +672,7 @@ class WaveCoreApp:
             controls, text="50% 重叠（帧间无空白）", variable=self.overlap_var,
             command=self.apply_overlap,
         ).grid(row=7, column=1, columnspan=2, padx=4, pady=(6, 0), sticky="w")
-        ttk.Label(controls, textvariable=self.overlap_info_var).grid(
+        _fixed_label(controls, self.overlap_info_var, 40).grid(
             row=7, column=3, columnspan=6, padx=(12, 0), pady=(6, 0), sticky="w"
         )
 
@@ -678,7 +701,7 @@ class WaveCoreApp:
         ttk.Checkbutton(
             controls, text="DAC 回放", variable=self.play_var, command=self.toggle_play
         ).grid(row=8, column=5, columnspan=1, padx=4, pady=(6, 0), sticky="w")
-        ttk.Label(controls, textvariable=self.ifft_info_var).grid(
+        _fixed_label(controls, self.ifft_info_var, 44).grid(
             row=8, column=6, columnspan=4, padx=(12, 0), pady=(6, 0), sticky="w"
         )
 
@@ -700,14 +723,13 @@ class WaveCoreApp:
         self.wave_src_box.grid(row=10, column=1, columnspan=2, padx=4, pady=(8, 0), sticky="w")
         self.wave_src_box.bind("<<ComboboxSelected>>", self.on_wave_src_changed)
 
-        ttk.Label(controls, textvariable=self.wave_src_info_var).grid(
-            row=10, column=3, columnspan=7, padx=(12, 0), pady=(8, 0), sticky="w"
+        _fixed_label(controls, self.wave_src_info_var, 14).grid(
+            row=10, column=3, columnspan=2, padx=(12, 0), pady=(8, 0), sticky="w"
         )
 
-        ttk.Label(
-            controls,
-            textvariable=self.applied_settings_var,
-        ).grid(row=11, column=0, columnspan=10, pady=(6, 0), sticky="w")
+        _fixed_label(controls, self.applied_settings_var, 96).grid(
+            row=11, column=0, columnspan=10, pady=(6, 0), sticky="w"
+        )
 
         self.plot_notebook = ttk.Notebook(self.root)
         self.plot_notebook.grid(row=3, column=0, sticky="nsew", padx=12, pady=(4, 10))
@@ -913,14 +935,6 @@ class WaveCoreApp:
             padx=8,
             pady=(0, 8),
         )
-
-    @staticmethod
-    def _measurement_card(parent, column, title, variable, row=0):
-        card = ttk.LabelFrame(parent, text=title, padding=(10, 6))
-        card.grid(row=row, column=column, sticky="nsew", padx=4, pady=3)
-        ttk.Label(card, textvariable=variable, style="Value.TLabel").pack()
-        return card
-
     def refresh_ports(self):
         ports = available_ports()
         devices = [port.device for port in ports]
@@ -1235,7 +1249,13 @@ class WaveCoreApp:
             1: "Hann：折中档（-31 dB），也是上电默认",
             2: "Blackman：抑漏最强（-58 dB），主瓣最宽",
         }[index]
-        self.window_info_var.set(detail + "（跑一次 FFT 看底噪变化）")
+        # [10-18] 自适应关着的时候, 手动选的就是实际在用的 -> 立刻更新卡片,
+        #   不用等下一次 FFT 回传 WIN= 行。
+        if not self.win_auto_var.get():
+            self.win_used_var.set(
+                {0: "矩形窗", 1: "Hann 窗", 2: "Blackman 窗"}[index]
+            )
+        self.window_info_var.set(detail)
 
     def apply_overlap(self):
         """发送 0x91 帧重叠开关。
@@ -1282,12 +1302,13 @@ class WaveCoreApp:
         auto = self.win_auto_var.get()
         if not self._send(command_set_win_auto(auto), "已切换选窗方式"):
             return
+        # [10-18] 只给短状态。原来那段"多数频率下判为 Hann…试 976Hz…"太长,
+        #   一勾选就把整行撑宽、整个窗口被拉大。说明写在文档里, 这里只留 4 个字。
+        self.window_info_var.set("自适应" if auto else "手动")
         if auto:
-            self.window_info_var.set(
-                "选窗：自适应（多数频率下判为 Hann，与默认相同；试 976 Hz 可看出切换）"
-            )
-        else:
-            self.window_info_var.set("选窗：手动（按下面的下拉框）")
+            # 自适应下实际用哪个窗, 要等硬件判完才知道 —— 跑一次 FFT，
+            # 靠回传的 WIN= 行更新「当前窗」卡片。
+            self.win_used_var.set("待判定")
 
     def on_wave_src_changed(self, event=None):
         """下拉框一改就切换识别来源（0x96），并立刻要一帧结果。
@@ -1305,9 +1326,8 @@ class WaveCoreApp:
             return
         # 立刻要一帧，让 TY 行按新来源刷新
         self._send(command_request_waveform(), "已切换识别来源，正在刷新一帧")
-        self.wave_src_info_var.set(
-            "来源：%s（已刷新一帧）" % ("神经网络" if use_nn else "规则法")
-        )
+        # [10-18] 同上, 只给短状态, 避免撑宽界面
+        self.wave_src_info_var.set("神经网络" if use_nn else "规则法")
 
     def stop_ifft(self):
         """停止频域滤波，把信号恢复成未滤波状态。
