@@ -63,12 +63,17 @@ echo   Do NOT use the RAMB18 column as a pass/fail criterion.
 echo.
 echo   ---------- REAL design usage  (after place_design) --------------
 echo.
-echo     Slice LUTs      8595 (41.3 pct)      was 20829 (100.1 pct, OVER)
-echo     Slice Registers 8472 (20.4 pct)      was 35818 ( 86.1 pct)
-echo     Block RAM       12   (24.0 pct)
+echo     Slice LUTs      7358 (35.4 pct)      was 20829 (100.1 pct, OVER)
+echo     Slice Registers 6521 (15.7 pct)      was 35818 ( 86.1 pct)
+echo     Block RAM       11   (22.0 pct)
 echo     DSP             38   (42.2 pct)
-echo     WNS             +0.536 ns, 0 failing endpoints
+echo     WNS             +1.552 ns, 0 failing endpoints
 echo     -^> see impl_1\board_top_utilization_placed.rpt
+echo.
+echo   ILA is now DISABLED (ILA_EN=0 in board_top.v). It was costing
+echo   729 LUT / 1253 FF / 1 RAMB36. Turning it off took LUT 41.3 -> 35.4 pct
+echo   and WNS +0.536 -> +1.552 ns (more routing freedom).
+echo   To debug with ILA again: set ILA_EN=1 and rebuild (8-15 min).
 echo.
 echo   NOTE: 729 LUT / 1253 FF / 1 RAMB36 of the above is the ILA debug
 echo   core (ILA_EN in board_top.v). Set ILA_EN=0 and rebuild to drop it:
