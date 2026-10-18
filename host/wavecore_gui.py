@@ -1752,12 +1752,13 @@ class WaveCoreApp:
         elif event_type == "measurement":
             # [10-18] A 行超时清除: FPGA 只在存在第二峰时发 A 行,
             #   1.5 秒内没收到 A 就是"第二峰已经没了" —— 直接显示 "--", 不要留旧值。
-            #   这是 IFFT 滤波 "两个峰变一个峰" 在界面上的直接体现。
+            #   **只显示 "-- Hz", 不加中文说明** —— 卡片是实时刷新的,
+            #   两峰等幅时会来回互换/闪现, 任何附带的文字都会跟着闪, 反而更难读。
             if (self.latest_peak_a_hz is not None
                     and self._last_peak_a_time > 0
                     and time.monotonic() - self._last_peak_a_time > 1.5):
                 self.latest_peak_a_hz = None
-                self.peak_a_var.set("-- Hz（无第二峰）")
+                self.peak_a_var.set("-- Hz")
             self.frequency_var.set(f"{event['frequency_hz']} Hz")
             self.latest_vpp_value = event["vpp_mv"]
             self.vpp_var.set(f"{self.latest_vpp_value} {self._vpp_unit()}")
@@ -1784,15 +1785,11 @@ class WaveCoreApp:
                 #   残留由上面 1.5 秒的超时清除处理（FPGA 不发 A 就自动变 "--"）。
                 self.latest_peak_a_hz = event["frequency_hz"]
                 self._last_peak_a_time = time.monotonic()
-                a_hz = event["frequency_hz"]
-                s_hz = self.latest_peak_s_hz
-                # [10-18] 回放波形的幅度被 Hann 包络调制 -> 主峰两侧必有 ±48.8Hz 的
-                #   边带, 各约 -6dB。它们离主峰 4 个 bin(>2), 所以会被 IP FFT 当成"第二峰"。
-                #   这不是故障, 是加窗的必然结果。界面上标出来, 免得误以为是残余信号。
-                if s_hz is not None and 0 < abs(a_hz - s_hz) <= 100:
-                    self.peak_a_var.set(f"{a_hz} Hz（主峰包络边带，正常）")
-                else:
-                    self.peak_a_var.set(f"{a_hz} Hz")
+                # [10-18 撤回] 曾在这里加"（主峰包络边带，正常）"的中文标注,
+                #   但 S/A 两峰幅度几乎相等、会来回互换, 于是这段文字在两行间
+                #   反复切换, 比纯数字更难看。**界面上只给数字。**
+                #   边带/残余的区分写在文档里, 不放在实时刷新的卡片上。
+                self.peak_a_var.set(f"{event['frequency_hz']} Hz")
 
         elif event_type == "duty":
             if self.dual_tone_enabled:
