@@ -22,7 +22,10 @@ module self_fft_report (
     input  wire        dbg_req,     // 0x94 触发(1拍脉冲)
     input  wire [23:0] dbg_v1,      // -> SF= 行
     input  wire [23:0] dbg_v2,      // -> S2= 行
-    input  wire [23:0] dbg_v3       // -> S3= 行
+    input  wire [23:0] dbg_v3,      // -> S3= 行
+    input  wire [1:0]  win_now      // [10-18] 实际生效的窗: 0=矩形 1=Hann 2=Blackman
+                                    //   三行发完后追加一行 "WIN=RECT/HANN/BLK\r\n"
+                                    //   自适应开着时, 这是唯一能直观看出来的地方。
 );
     // ---- 选择当前峰 ----
     reg  [1:0]  k_sel;              // 0=SF 1=S2 2=S3
@@ -46,6 +49,35 @@ module self_fft_report (
     reg [7:0] tx_byte; reg tx_start; wire tx_busy;
     uart_tx u_uart (.clk(clk), .rst_n(rst_n), .tx_data(tx_byte),
                     .tx_start(tx_start), .tx_busy(tx_busy), .txd(uart_txd));
+
+    // ---- [10-18] 第 4 行: "WIN=xxxx\r\n" 报告实际用的窗 ----
+    //   紧跟 SF/S2/S3 之后发, 长度固定 10 字节, 便于上位机按行解析。
+    //   自适应模式开着的时候, 这行就是"它到底选了什么"的唯一直接证据。
+    reg [3:0]  widx;
+    wire [7:0] wch = win_char_at(widx);
+    function [7:0] win_char_at(input [3:0] i);
+        case (i)
+            4'd0: win_char_at = 8'h57;                       // 'W'
+            4'd1: win_char_at = 8'h49;                       // 'I'
+            4'd2: win_char_at = 8'h4E;                       // 'N'
+            4'd3: win_char_at = 8'h3D;                       // '='
+            // 名称定长 4 字符, 右补空格, 让每行等长 10 字节
+            4'd4: win_char_at = (win_now==2'd1) ? 8'h48 :     // Hann  'H'
+                                (win_now==2'd2) ? 8'h42 :     // Black 'B'
+                                                  8'h52;      // Rect  'R'
+            4'd5: win_char_at = (win_now==2'd1) ? 8'h41 :     // 'a'
+                                (win_now==2'd2) ? 8'h4C :     // 'L'
+                                                  8'h45;      // 'E'
+            4'd6: win_char_at = (win_now==2'd1) ? 8'h4E :     // 'n'
+                                (win_now==2'd2) ? 8'h4B :     // 'K'
+                                                  8'h43;      // 'C'
+            4'd7: win_char_at = (win_now==2'd1) ? 8'h4E :     // 'n'
+                                (win_now==2'd2) ? 8'h20 :     // ' '
+                                                  8'h54;      // 'T'
+            4'd8: win_char_at = 8'h0D;
+            default: win_char_at = 8'h0A;
+        endcase
+    endfunction
 
     // ---- 行字符: "S?" + "=" + 7位数字 + "Hz\r\n" = 14 字节 ----
     reg [3:0] idx;
@@ -72,7 +104,7 @@ module self_fft_report (
     endfunction
 
     // ---- 状态机 ----
-    localparam S_WAIT=2'd0, S_CF=2'd1, S_WF=2'd2, S_SEND=2'd3;
+    localparam S_WAIT=2'd0, S_CF=2'd1, S_WF=2'd2, S_SEND=2'd3, S_WINS=2'd4;
     reg [1:0] state; reg guard;
     reg       pending;      // 结果待发
 
@@ -120,13 +152,35 @@ module self_fft_report (
                                 f_start <= 1'b1;
                                 state   <= S_CF;
                             end
-                            else begin state <= S_WAIT; dbg_mode <= 1'b0; end
+                            else begin                    // [10-18] S3 发完 -> 转去发 WIN 行
+                                widx  <= 4'd0;
+                                guard <= 1'b0;
+                                state <= S_WINS;
+                            end
                         end
                         else begin
                             tx_byte  <= ch;
                             tx_start <= 1'b1;
                             guard    <= 1'b1;
                             idx      <= idx + 4'd1;
+                        end
+                    end
+                end
+                // [10-18] 第 4 行: WIN=RECT / WIN=HANN / WIN=BLK  (定长 10 字节)
+                S_WINS: begin
+                    if (guard) begin
+                        if (tx_busy) guard <= 1'b0;
+                    end
+                    else if (!tx_busy) begin
+                        if (widx == 4'd10) begin
+                            state    <= S_WAIT;
+                            dbg_mode <= 1'b0;
+                        end
+                        else begin
+                            tx_byte  <= wch;
+                            tx_start <= 1'b1;
+                            guard    <= 1'b1;
+                            widx     <= widx + 4'd1;
                         end
                     end
                 end

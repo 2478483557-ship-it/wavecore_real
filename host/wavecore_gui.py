@@ -276,6 +276,7 @@ class WaveCoreApp:
         self.latest_pulse_width_us = None
         self.latest_waveform_type = None
         self.latest_self_fft_peaks = {"SF": None, "S2": None, "S3": None}
+        self.latest_window_used = None
         self.suppress_peak_a_until = 0.0
         # [10-18] 最后一次收到 A 行的时刻。FPGA 只在"存在第二峰"时才发 A 行,
         #   所以超过一段时间没收到 = 第二峰消失了。
@@ -314,6 +315,8 @@ class WaveCoreApp:
             value="来源：规则法（TY 行随测量自动上报）"
         )
         self.self_fft_var = tk.StringVar(value="-- / -- / -- Hz")
+        # [10-18] 当前实际使用的窗 (来自 SF/S2/S3 之后那条 WIN= 行)
+        self.win_used_var = tk.StringVar(value="--")
         self.main_frequency_var = tk.StringVar(value="1000")
         self.second_frequency_var = tk.StringVar(value="1100")
         self.waveform_choice_var = tk.StringVar(value="正弦")
@@ -439,6 +442,7 @@ class WaveCoreApp:
         self._measurement_card(measurements, 1, "脉宽 W", self.pulse_width_var, row=1)
         self._measurement_card(measurements, 2, "识别结果", self.detected_waveform_var, row=1)
         self._measurement_card(measurements, 3, "自研FFT SF/S2/S3", self.self_fft_var, row=1)
+        self._measurement_card(measurements, 0, "当前窗", self.win_used_var, row=2)
 
         controls = ttk.LabelFrame(self.root, text="信号与采集控制", padding=(10, 7))
         controls.grid(row=2, column=0, sticky="ew", padx=12, pady=4)
@@ -1820,6 +1824,11 @@ class WaveCoreApp:
             self.detected_waveform_var.set(
                 f"{waveform_type}：{waveform_names.get(waveform_type, '未知')}"
             )
+
+        elif event_type == "window_used":
+            # [10-18] 每跑一次自研 FFT, 硬件在 SF/S2/S3 之后补一条 WIN= 行
+            self.win_used_var.set(event["name"])
+            self.latest_window_used = event["code"]
 
         elif event_type == "self_fft_peak":
             self.latest_self_fft_peaks[event["name"]] = event["frequency_hz"]

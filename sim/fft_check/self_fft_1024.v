@@ -38,6 +38,9 @@ module self_fft_1024 #(
     output wire [8:0]  spec_waddr,   // [0x8E] 写地址 = bin 号
     output wire [7:0]  spec_wdata,   // [0x8E] 压缩幅度(spec_compress 输出)
     output wire        busy,         // [0x8E] 运行中(采集/蝶形/扫描), 供 spec_frame 等待
+    output wire [1:0]  win_now,      // [10-18] 实际生效的窗: 0=矩形 1=Hann 2=Blackman
+                                     //   自适应开着时这是 win_auto_pick 的结果,
+                                     //   上位机据此上报 "WIN=" 行, 让人直接看见用了哪个窗。
     output wire [3:0]  dbg_st,       // [调试] 当前状态(0~13)
     // [10-17 新增] 0x94 状态回读用的三个值(打包成 24 位, 由 self_fft_report 以 SF/S2/S3 发出)
     //     （旧的 0xD00000 编码方案已废弃, 会超出上报的 7 位数字; 现用下面这套:）
@@ -123,6 +126,8 @@ module self_fft_1024 #(
     // 阈值 0.15 bin = 38/256: 矩形窗在该偏移下旁瓣已明显抬高, 再大就该加窗。
     reg        win_auto_pick;        // 1=本轮自动判定选 Hann
     wire [1:0] win_cfg_eff = win_auto ? {1'b0, win_auto_pick} : win_cfg;
+    assign win_now = win_cfg_eff;      // [10-18] 供上报
+
     wire [15:0] win_w = (win_cfg_eff == 2'd0) ? 16'd32768 :
                         (win_cfg_eff == 2'd2) ? win_black : win_hann;
 

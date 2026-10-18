@@ -213,6 +213,7 @@ wire        ty_src_sel_w;
 wire        win_auto_w;      // [0x97] 自适应选窗
 wire        avg_en_w;        // [0x98] 谱平均
 wire [1:0]  ty_show;          // 最终送给 TY= 行的类别
+wire [1:0]  win_now_w;        // [10-18] 实际生效的窗 -> 上报 WIN= 行
 // 规则法原生编码: 0=方波 1=正弦 2=三角 3=其他
 // 神经网络编码:   0=正弦 1=方波 2=三角 3=其他
 //   -> 选 NN 时要把 0/1 互换, 才能让 TY= 行保持同一套语义
@@ -502,6 +503,7 @@ reg         dbg_req_d;
         .spec_waddr(spec_waddr_w),
         .spec_wdata(spec_wdata_w),
         .busy     (sf_busy_w ),
+        .win_now  (win_now_w ),   // [10-18] 实际生效的窗
         .dbg_rd1 (dbg_rd1_w),   // [10-17] 0x94 状态回读
         .dbg_rd2 (dbg_rd2_w),
         .dbg_rd3 (dbg_rd3_w)
@@ -513,6 +515,7 @@ reg         dbg_req_d;
         .res_f2   (sf_f2_w   ),
         .res_f3   (sf_f3_w   ),
         .res_done (sf_done_w & ~spec_hold_w), // 0x8E 触发的运行不报 SF 行(防抢 TX)
+        .win_now  (win_now_w ),               // [10-18] 上报 WIN= 行
         .m_busy   (m_busy    ),
         .fft_act  (fft_act   ),
         .wav_act  (wav_act | spec_act_w),     // 谱帧发送期间也让路

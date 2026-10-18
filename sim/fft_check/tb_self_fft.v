@@ -123,6 +123,7 @@ module tb_self_fft;
         .decim_cfg(dec_cfg), .fs_cfg(32'd0),   // [0x8D] 0 = 用参数(DECIM=1) / 50000
         .win_cfg(win_cfg),                   // [0x90] 窗函数运行时可切换
         .win_auto(win_auto),                 // [10-18] 自适应选窗
+        .win_now (                  ),        // [10-18] 实际生效的窗(测试台不关心)
         .avg_en(avg_en),                     // [10-18] 谱平均
         .ovl_en(ovl_en),                     // [0x91] 50% 帧重叠
         .inv_run(inv_run),                   // [0x92] IFFT 频域滤波

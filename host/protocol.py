@@ -65,6 +65,11 @@ SELF_FFT_PATTERN = re.compile(
     rb"^(SF|S2|S3)=(\d{7})Hz$"
 )
 
+# [10-18] 第 4 行: WIN=RECT / WIN=HANN / WIN=BLK  (定长 4 字符, 后面可能补空格)
+#   跟 SF/S2/S3 一起发, 报告这一帧实际用的是哪个窗。
+#   自适应模式开着时, 这是唯一能直接看出"它选了什么"的地方。
+WINDOW_PATTERN = re.compile(rb"^WIN=([A-Z ]{4})$")
+
 
 def build_command(command_type: int, payload: bytes = b"") -> bytes:
     """生成通用下行命令帧。"""
@@ -461,6 +466,17 @@ def parse_ascii_line(line: bytes):
             "type": "self_fft_peak",
             "name": match.group(1).decode("ascii"),
             "frequency_hz": int(match.group(2)),
+        }
+
+    match = WINDOW_PATTERN.fullmatch(line)
+    if match:
+        code = match.group(1).decode("ascii").strip()
+        return {
+            "type": "window_used",
+            "code": code,
+            "name": {"RECT": "矩形窗", "HANN": "Hann 窗", "BLK": "Blackman 窗"}.get(
+                code, code
+            ),
         }
 
     return None
