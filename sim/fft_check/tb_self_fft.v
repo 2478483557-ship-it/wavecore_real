@@ -816,6 +816,44 @@ module tb_self_fft;
             repeat (300) @(posedge clk);
         end
 
+        $display("-------- [10-18] play_valid: 正向 FFT 后禁止回放, 反向后才允许 --------");
+        begin : pv_t
+            // 这一条直接对应"回放要么毛刺要么没输出"的根因:
+            //   mem 在 0x8A 后是频谱, 0x92 后才是时域。play_valid 必须反映这一点。
+            reg pv0, pv1, pv2;
+            // 本场景先复位, 保证 pv0 是可判定的初值
+            play_en = 1'b0; sel = 3'd1; mask_lo = 10'd96; mask_hi = 10'd108;
+            rst_n = 1'b0; repeat (4) @(posedge clk); rst_n = 1'b1;
+            repeat (4) @(posedge clk);
+            // ① 复位态
+            pv0 = u_dut.play_valid;
+            // ② 跑一次正向 FFT -> 应为 0
+            @(negedge clk); run = 1'b1; @(negedge clk); run = 1'b0;
+            @(posedge res_done); repeat (5) @(posedge clk);
+            pv1 = u_dut.play_valid;
+            // ③ 跑一次反向 -> 应为 1
+            //   反向变换完成时会转 S_DONE 并拉 res_done, 直接等它最稳；
+            //   固定等 2000/40000 拍都不够（实测一次 1024 点变换约 10 万拍量级）。
+            @(negedge clk); inv_run = 1'b1; @(negedge clk); inv_run = 1'b0;
+            fork : pvw
+                begin : pvto
+                    #6000000;
+                    $display("    [TIMEOUT] 反向未完成 st=%0d inv_mode=%0d pv=%0b",
+                             u_dut.st, u_dut.inv_mode, u_dut.play_valid);
+                    disable pvw;
+                end
+                begin
+                    @(posedge res_done); repeat (40) @(posedge clk);
+                    disable pvw;
+                end
+            join
+            pv2 = u_dut.play_valid;
+            $display("    复位=%0b  正向FFT后=%0b  反向变换后=%0b", pv0, pv1, pv2);
+            chk("play_valid: 复位为0", pv0 === 1'b0);
+            chk("play_valid: 正向FFT后为0(禁止回放)", pv1 === 1'b0);
+            chk("play_valid: 反向变换后为1(允许回放)", pv2 === 1'b1);
+        end
+
         $display("-------- [10-18] 谱平均开关不影响谱形状 --------");
         begin : avg_t
             // 平均器是"线性域多帧平均", 对**稳态正弦**不改变谱峰位置与相对形状。

@@ -1335,10 +1335,21 @@ class WaveCoreApp:
             messagebox.showerror("掩膜范围错误", "起始 bin 必须小于结束 bin")
             return
 
+        # 第 0 步：**必须停掉实时频谱**。
+        #   频谱页每 150ms 发一次 0x8E，每次都会**重新采集**一帧 ——
+        #   它会把 mem 反复冲掉，导致反向变换的成果活不过 150ms，
+        #   表现出来就是"DAC 回放什么都没有"（play_valid 刚置 1 就被清 0）。
+        #   这是整个 IFFT 演示最隐蔽的坑。
+        if self.spectrum_running:
+            self.stop_spectrum()
+            warn_msg = "（已自动停止实时频谱：它会每 150ms 重采一帧，冲掉回放数据）"
+        else:
+            warn_msg = ""
+
         # 第 1 步：跑一次正向 FFT（采集 + 蝶形 + 找峰），让 mem 里有一帧频谱
         if not self._send(command_run_self_fft(), "第 1/3 步：采集并跑正向 FFT…"):
             return
-        self.ifft_info_var.set("1/3 正向 FFT 运行中…（约 0.3 秒）")
+        self.ifft_info_var.set("1/3 正向 FFT 运行中…（约 0.3 秒）" + warn_msg)
 
         # 第 2 步：等 FFT 跑完再发 0x92。
         #   0x8A 需要采 1024 点 + 10 级蝶形，T1 时约 20ms 采集；
@@ -1365,11 +1376,21 @@ class WaveCoreApp:
         注意：往返衰减 1/N，输出幅度只有约 1/5 满量程（硬件内已做 5 倍增益与饱和）。
         """
         on = bool(self.play_var.get())
+        # 开回放前必须停掉实时频谱：它每 150ms 重采一帧，会把 mem 冲掉，
+        # 回放会变成静音（play_valid 被反复清零）或毛刺（mem 里是频谱）。
+        stopped_spec = False
+        if on and self.spectrum_running:
+            self.stop_spectrum()
+            stopped_spec = True
         if not self._send(command_play_ifft(on), "已发送回放命令"):
             return
-        self.ifft_info_var.set(
-            "DAC 回放中：示波器接 DA 输出可见滤波后波形" if on else "已停止回放，DDS 重新驱动 DAC"
-        )
+        if on:
+            msg = "DAC 回放中：示波器接 DA 输出可见滤波后波形"
+            if stopped_spec:
+                msg += "（已自动停止实时频谱）"
+        else:
+            msg = "已停止回放，DDS 重新驱动 DAC"
+        self.ifft_info_var.set(msg)
 
     def apply_pretrigger(self):
         """发送 0x8F 预触发比例（v1.21）。

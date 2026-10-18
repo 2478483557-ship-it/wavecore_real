@@ -206,8 +206,8 @@ module self_fft_1024 #(
     //   改成十进制友好编码, 保证 < 10^7(上报只有 7 位):
     //     SF = 500000 + st*1024 + 标志字节
     //     解码: 状态机 = (SF-500000)/1024, 标志 = (SF-500000)%1024 的二进制
-    //     标志位: bit4=play_en bit3=inv_done bit2=inv_pend bit1=inv_mode bit0=cap_on
-    wire [7:0] dbg_flag = {3'd0, play_en, inv_done, inv_pend, inv_mode, cap_on};
+    //     bit5=play_valid  bit4=play_en  bit3=inv_done  bit2=inv_pend  bit1=inv_mode  bit0=cap_on
+    wire [7:0] dbg_flag = {2'd0, play_valid, play_en, inv_done, inv_pend, inv_mode, cap_on};
     wire [23:0] dbg_sf = 24'd500000 + {st, 10'd0} + {16'd0, dbg_flag};
     assign dbg_rd1 = dbg_sf;                         // 7 位以内, 不会溢出
     assign dbg_rd2 = {16'd0, da_play};              // 送 DAC 的当前样点(0..255)
@@ -444,18 +444,21 @@ module self_fft_1024 #(
             if (run) begin run_l <= 1'b1; done_latch <= 1'b0; end  // 新任务清锁存
 
             // ---- 采集(仅收到 run 后进行一次) ----
-            if (!cap_on && run_l && st==S_CAP) begin
+            // [10-18] 回放期间**拒绝采集**：采集会摧毁 mem，导致回放输出归零。
+            //   上位机的实时频谱每 150ms 发一次 0x8E，每次都会走到这里 ——
+            //   如果不挡住，反向变换的成果活不过 150ms（这是 IFFT 演示失败的真凶）。
+            if (!cap_on && run_l && st==S_CAP && !play_en) begin
                 run_l  <= 1'b0;
                 // [10-16] 50% 重叠: 除复位后第一帧外, 先预载上一帧保存的后半 512 点,
                 //   再只采 512 个新点 -> 新帧 = [旧512 | 新512]。
                 inv_done <= 1'b0;          // 重新采集 -> mem 里不再是时域波形, 禁止回放
+                play_valid <= 1'b0;        // [10-18] 同上, 无条件清（含重叠路径, 原来只在 else 分支清, 会漏）
                 if (ovl_en && !first_run) begin
                     pre_idx <= 10'd0;
                     st      <= S_PRE;
                 end
                 else begin
                     cap_on <= 1'b1;
-                    play_valid <= 1'b0;   // [10-18] 新一帧正向采集 -> mem 将变成频谱
                     dcnt   <= 32'd0;
                     wr_idx <= 10'd0;
                     cnt_wr <= 11'd0;      // [调试] 清体检计数
