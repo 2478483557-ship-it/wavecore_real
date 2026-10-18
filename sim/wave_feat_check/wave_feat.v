@@ -43,6 +43,17 @@ module wave_feat (
     reg [19:0]        a_sl;           // sum|x[n]-x[n-1]|  ≤1024*255 -> 20
     reg [10:0]        a_zc;           // 过零次数        ≤1024      -> 11
 
+    // ---- [10-18 时序修复] 峭度链路的乘法流水 ----
+    // 原写法 `a_x4 <= a_x4 + (abs8*abs8)*(abs8*abs8)` 把
+    //   9x9 乘 -> 15x15 乘 -> 40 位加 串在**一个 20ns 周期**里,
+    //   实测 WNS = -1.693ns、40 个端点失败, 关键路径终点正是 a_x4_reg[39]。
+    // 但 din_valid 每 decim(=1000) 拍才来一次, **插管线的代价几乎为零** ——
+    //   只是综合器按单周期算, 不会自己发现有 1000 拍余量。
+    // 拆成两级: sq8 打一拍、x4 再打一拍, 累加用 x4_r。
+    reg [14:0] sq8_r;          // abs8*abs8 打一拍（砍掉 9x9 乘这一级）
+    reg        pv1;            // 对应的 valid 延迟
+    reg        hold_last;      // 最后一个样本: 等流水走完再进 S_CALC
+
     // [10-17 修复·关键] 取绝对值必须**先符号扩展成 9 位有符号再去负**。
     //   原来写 {1'b0, din[7:0]} 把 -120 当成无符号 136, 9'd0-136 在 9 位下 = 376,
     //   于是 pk 得到 372/376(超出 8 位), 所有特征全错 —— 实测 pk=372 才发现的。
@@ -114,6 +125,7 @@ module wave_feat (
             st <= S_IDLE; cnt <= 11'd0; prev <= 8'sd0; prev_v <= 1'b0; pk <= 9'd0;
             a_hi <= 11'd0; a_s <= 21'sd0; a_sq <= 27'd0;
             a_x4 <= 40'd0; a_sl <= 20'd0; a_zc <= 11'd0;
+                        sq8_r <= 15'd0; pv1 <= 1'b0; hold_last <= 1'b0;
             f0 <= 16'd0; f1 <= 16'd0; f2 <= 16'd0; f3 <= 16'd0; f4 <= 16'd0; f5 <= 16'd0;
             done <= 1'b0; dbg_st <= 4'd0; dbg_op <= 4'd0;
             dv_n <= 40'd0; dv_nsh <= 40'd0; dv_r <= 40'd0; dv_q <= 40'd0; dv_d <= 26'd0;
@@ -162,12 +174,21 @@ module wave_feat (
                     end
                 end
                 S_ACC: begin
+                    // ---- [10-18 时序修复] 砍掉 9x9 乘法这一级 ----
+                    //   原来 sq8/x4_8 都是组合, 与 40 位累加串在一个周期里,
+                    //   实测 WNS = -1.693ns。din_valid 每 decim 拍才来一次,
+                    //   插管线不影响功能, 只是综合器不知道有这个余量。
+                    if (din_valid) sq8_r <= abs8 * abs8;          // 第1级
+                    pv1 <= (st == S_ACC) && din_valid;
+
+                    // 组合 sq8 喂不进 a_x4 的时序, 改用打拍后的 sq8_r(延迟1拍)
+                    if (din_valid) a_sq <= a_sq + sq8;   // [10-18] a_sq 保持组合(27位加法路径短)
+                    if (pv1) a_x4 <= a_x4 + (sq8_r * sq8_r);   // 只砍掉 9x9 那一级
+
                     if (din_valid) begin
                         if (abs8 > pk) pk <= abs8;
                         if (din > 8'sd0) a_hi <= a_hi + 11'd1;
                         a_s  <= a_s  + $signed({{13{din[7]}}, din});
-                        a_sq <= a_sq + sq8;
-                        a_x4 <= a_x4 + x4_8;
                         if (prev_v) begin
                             a_sl <= a_sl + adif;
                             // [10-17 修复] 过零判据要与训练一致: Python 用 (x > 0),
@@ -176,8 +197,15 @@ module wave_feat (
                             if (pos_d != pos_p) a_zc <= a_zc + 11'd1;
                         end
                         prev  <= din; prev_v <= 1'b1;
-                        if (cnt == 11'd1023) st <= S_CALC;
+                        // [10-18] 最后一个样本不能立刻进 S_CALC ——
+                        //   a_x4 的累加还压着一拍(pv1), 要等它走完。
+                        if (cnt == 11'd1023) hold_last <= 1'b1;
                         else cnt <= cnt + 11'd1;
+                    end
+
+                    if (hold_last && pv1) begin
+                        hold_last <= 1'b0;
+                        st <= S_CALC;
                     end
                 end
                 //======== 串行: 6 个操作, 每个"启动 -> 等完成 -> 存结果" ========
