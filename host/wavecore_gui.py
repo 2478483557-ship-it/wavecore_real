@@ -456,6 +456,12 @@ class WaveCoreApp:
         ttk.Label(connection, textvariable=self.status_var, style="Status.TLabel").grid(
             row=0, column=4, padx=(12, 0), sticky="e"
         )
+        # [10-19] 演示模式按钮：答辩时一键让图表占满屏幕，再按一次回来。
+        self.present_button = ttk.Button(
+            connection, text="演示模式 F11", width=12,
+            command=self._toggle_present_mode
+        )
+        self.present_button.grid(row=0, column=5, padx=(8, 0))
 
         measurements = ttk.Frame(self.root, padding=(12, 3))
         measurements.grid(row=1, column=0, sticky="ew")
@@ -736,6 +742,14 @@ class WaveCoreApp:
         _fixed_label(controls, self.applied_settings_var, 96).grid(
             row=11, column=0, columnspan=10, pady=(3, 0), sticky="w"
         )
+
+        # [10-19 演示模式] 记住上方三行，按 F11 时整行隐藏，绘图区铺满。
+        #   赛场投影/答辩时用：控制面板平时要，讲解时挡地方。
+        self._present_rows = (connection, measurements, controls)
+        self._present_mode = False
+        self._saved_geometry = ""
+        self.root.bind("<F11>", self._toggle_present_mode)
+        self.root.bind("<Escape>", self._exit_present_mode)
 
         self.plot_notebook = ttk.Notebook(self.root)
         self.plot_notebook.grid(row=3, column=0, sticky="nsew", padx=12, pady=(4, 10))
@@ -1242,6 +1256,47 @@ class WaveCoreApp:
             raise ValueError("请选择0%、25%、50%或75%预触发") from error
 
     # ===================== [10-16 v1.22] 新增功能 =====================
+    def _toggle_present_mode(self, event=None):
+        """F11：进入/退出演示模式。
+
+        进入时把串口行、测量卡片、控制面板整行隐藏（grid_remove 会记住位置，
+        退出时 grid() 原地复原，不需要重算布局），并把窗口切全屏。
+        绘图区本来就占 row=3 的权重 1，上面三行一没，它就自动铺满。
+
+        为什么不做"另开一个串口的大窗口"：
+          Windows 下 pyserial 是独占打开（源码 serialwin32.py 的 CreateFile
+          共享参数为 0），一个 COM 口只能被一个进程持有；而且板子第二个串口
+          uart_stm32_txd 是主串口的原样镜像，接出来也是同一份字节流。
+          所以放大只能靠布局，不能靠加通道。
+        """
+        if self._present_mode:
+            self._exit_present_mode()
+            return
+
+        self._saved_geometry = self.root.geometry()
+        for widget in self._present_rows:
+            widget.grid_remove()
+        self.plot_notebook.grid_configure(padx=0, pady=0)
+        self.root.attributes("-fullscreen", True)
+        self._present_mode = True
+        if hasattr(self, "present_button"):
+            self.present_button.configure(text="退出演示 Esc")
+        self.status_var.set("演示模式：F11 或 Esc 退出")
+
+    def _exit_present_mode(self, event=None):
+        """Esc / 再按 F11：恢复三行面板与窗口尺寸。"""
+        if not self._present_mode:
+            return
+        self.root.attributes("-fullscreen", False)
+        self.plot_notebook.grid_configure(padx=12, pady=(4, 10))
+        for widget in self._present_rows:
+            widget.grid()
+        if self._saved_geometry:
+            self.root.geometry(self._saved_geometry)
+        self._present_mode = False
+        if hasattr(self, "present_button"):
+            self.present_button.configure(text="演示模式 F11")
+
     def _refresh_window_info(self):
         """把"当前实际用的窗"和"手动/自适应"合并成一行小字。
 
