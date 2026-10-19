@@ -160,6 +160,12 @@ module cmd_decoder (
             ifft_set    <= 1'b0;
             play_set    <= 1'b0;
             dbg_read    <= 1'b0;
+            // [10-19 补漏] dbg_nn 在 10-17 那次修复里被漏掉了 ——
+            //   当时只给 dbg_read 加了默认清零。后果：发过一次 0x95 之后
+            //   dbg_nn 永久停在 1，dbg_req_d 恒为 1，上报模块被无限重触发，
+            //   串口一直刷 SF/S2/S3 行（与 10-17 修 dbg_read 前的现象一模一样）。
+            //   实测：修复前发一次 0x95，之后 3 秒内全是 SF 行。
+            dbg_nn      <= 1'b0;
             if (rx_done) begin
                 case (st)
                     ST_H1: begin

@@ -104,8 +104,14 @@ module self_fft_report (
     endfunction
 
     // ---- 状态机 ----
-    localparam S_WAIT=2'd0, S_CF=2'd1, S_WF=2'd2, S_SEND=2'd3, S_WINS=2'd4;
-    reg [1:0] state; reg guard;
+    // [10-19 修复·重要] state 原来是 2 位，而 S_WINS 写成 2'd4 ——
+    //   2 位只能装 0~3，2'd4 被**截断成 2'b00 = S_WAIT**。
+    //   于是 `state <= S_WINS` 实际是 `state <= 0`，S_WINS 分支成了死代码，
+    //   **WIN= 行从加入那天起就一次也没发出去过**（实测：S3 之后直接接 F= 行）。
+    //   case 里 S_WAIT 与 S_WINS 同值 0，前者排在前面，后者永远匹配不到。
+    //   修法：加宽到 3 位。这是 2026-10-18 加 WIN 功能时埋下的，与声明修复无关。
+    localparam S_WAIT=3'd0, S_CF=3'd1, S_WF=3'd2, S_SEND=3'd3, S_WINS=3'd4;
+    reg [2:0] state; reg guard;
     reg       pending;      // 结果待发
 
     assign sf_active = (state != S_WAIT);

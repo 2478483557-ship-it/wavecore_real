@@ -237,7 +237,8 @@ def main():
         send(ser, 0x96, b"\x01", "识别源切到神经网络")
         rd.pump(0.4)
         send(ser, 0x95, b"", "读 NN 结果")
-        rd.pump(1.5)
+        # 上报模块要等 m_busy 落下来才能抢到 TX，1.5s 实测不够（0x8A 之后尤其慢）
+        rd.pump(2.5)
         ok_nn = rd.sf is not None and 700001 <= rd.sf <= 700004
         record("0x95 回读在 700001~700004", ok_nn,
                "SF=%s%s" % (rd.sf, "" if ok_nn else " ← 越界=特征或类别位宽被截"))
@@ -253,7 +254,7 @@ def main():
         send(ser, 0x96, b"\x00", "识别源切回规则法")
         rd.pump(0.3)
         send(ser, 0x94, b"", "读状态")
-        rd.pump(1.2)
+        rd.pump(2.5)
         ok_st = rd.sf is not None and 500000 <= rd.sf < 501000
         record("0x94 首行在 500000~501000", ok_st,
                "SF=%s" % rd.sf)
