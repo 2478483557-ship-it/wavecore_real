@@ -103,6 +103,13 @@ module fft_demo #(
     localparam ST_CAP=2'd0, ST_CFG=2'd1, ST_FEED=2'd2, ST_WAIT=2'd3;
 
     reg [7:0] m_q;   // FEED 用的当前样点(独立读 always 产生)
+    // [10-19 修复] 下面三个 wire 原来声明在 180 行之后，但 146 行（ST_FEED）就要用 win_out。
+    //   Verilog-2001 会隐式声明成 1 位 wire —— {16'd0, win_out} 就只有 17 位，
+    //   送进 32 位 FFT 输入时高位补零，等于只有 1 个比特有效。
+    //   Vivado 恰好取了后面的显式声明所以实测正常，但这是运气，不是设计。
+    wire signed [15:0] samp_s;
+    wire signed [31:0] prod;
+    wire signed [15:0] win_out;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -179,10 +186,10 @@ module fft_demo #(
     always @(posedge clk)
         if (rd_en_w) m_q <= f_ram[rd_addr_w];
 
-    // 组合换算(读寄存器)
-    wire signed [15:0] samp_s = $signed({8'd0, m_q}) - 16'sd128;
-    wire signed [31:0] prod   = samp_s * $signed({1'b0, wq});
-    wire signed [15:0] win_out = prod[30:15];
+    // 组合换算(读寄存器) —— 声明已前置到模块上方（见 10-19 修复注释）
+    assign samp_s  = $signed({8'd0, m_q}) - 16'sd128;
+    assign prod    = samp_s * $signed({1'b0, wq});
+    assign win_out = prod[30:15];
 
     //================ 输出幅度 ================
     wire signed [15:0] re_i = $signed(m_data_tdata[15:0]);

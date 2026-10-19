@@ -202,7 +202,7 @@ BiCubic_y3 BiCubic_y3_inst(
 | A2 CDC 标注 | `ad_data` 加 `(* ASYNC_REG = "true" *)` 两级寄存 | 消掉 CDC 警告，功能不变 |
 | A3 常量前缀 | 现有 `localparam` 加 `C_` 前缀（如 `S_IDLE` → `C_S_IDLE`） | 命名规范统一 |
 
-> A1 必须验证"综合后资源与时序不变"，做法是改完跑一次 `check_lut.bat` 对比 7358/6521。
+> A1 必须验证"综合后资源与时序不变"，做法是改完跑一次 `check_lut.bat` 对比 7368/6521。
 
 ### B 级 · 低风险，机械拆分（时间够就做）
 

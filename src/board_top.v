@@ -145,6 +145,17 @@ wire [7:0]  da_play_w;   // [0x93] 回放样点 -> da_send
 wire [23:0] dbg_rd1_w, dbg_rd2_w, dbg_rd3_w;
 
 // ---- [10-17] 特征提取 + 神经网络推理（连续运行）----
+// [10-19 修复] 这几个 wire 原**声明在 200 行之后**，而例化在本行之下 ——
+//   Verilog-2001 会把未声明的标识符**隐式声明成 1 位**。Vivado 综合恰好
+//   取了后面的显式声明，所以实测正确；但换综合器可能真按 1 位处理：
+//   nn_cls 是 2 位、被截成 1 位就只剩两类，nf_f0 是 16 位、被截位宽则特征全丢。
+//   声明必须在首次使用之前 —— 这条 xvlog 会直接报 ERROR。
+wire [15:0] nf_f0, nf_f1, nf_f2, nf_f3, nf_f4, nf_f5;
+wire        nf_done, nn_done;
+wire [1:0]  nn_cls;
+reg  [31:0] nf_dcnt;       // 独立的抽取计数(与 self_fft 的采集互不干扰)
+wire        nf_tick = (nf_dcnt >= tb_decim_w - 32'd1);
+
 always @(posedge sys_clk or negedge sys_rst_n) begin
     if (!sys_rst_n) nf_dcnt <= 32'd0;
     else if (nf_tick) nf_dcnt <= 32'd0;
@@ -173,6 +184,16 @@ wave_nn #(.SH1(14), .SH2(11)) u_nn (
     .dbg_st(        )
 );
 
+// [10-19 修复] 这 5 个信号原来声明在下面 20 多行之后，但这里就要用。
+//   Verilog-2001 会把未声明标识符隐式声明成 1 位 wire；nn_cls_r 本来是 2 位，
+//   一旦被按 1 位处理，神经网络的 4 个类别就退化成 2 个 —— 而这种错误
+//   在 Vivado 里只报 warning，不会拦住综合。声明必须在使用之前。
+reg  [1:0]  nn_cls_r;      // 锁存最近一次的识别结果
+wire        dbg_read_w;    // 0x94 触发脉冲
+wire        dbg_nn_w;      // 0x95 触发脉冲
+reg         dbg_is_nn;
+reg         dbg_req_d;
+
 always @(posedge sys_clk or negedge sys_rst_n) begin
     if (!sys_rst_n)              nn_cls_r <= 2'd3;
     else if (nn_done)            nn_cls_r <= nn_cls;
@@ -199,15 +220,6 @@ end
 wire [23:0] dbg_v1 = dbg_is_nn ? nn_rd1 : dbg_rd1_w;
 wire [23:0] dbg_v2 = dbg_is_nn ? nn_rd2 : dbg_rd2_w;
 wire [23:0] dbg_v3 = dbg_is_nn ? nn_rd3 : dbg_rd3_w;
-wire        dbg_read_w;   // 0x94 触发脉冲
-// [10-17] 神经网络波形识别: 特征提取器 + 推理核, 连续统计
-wire [15:0] nf_f0, nf_f1, nf_f2, nf_f3, nf_f4, nf_f5;
-wire        nf_done, nn_done;
-wire [1:0]  nn_cls;
-reg  [1:0]  nn_cls_r;      // 锁存最近一次的识别结果
-reg  [31:0] nf_dcnt;       // 独立的抽取计数(与 self_fft 的采集互不干扰)
-wire        nf_tick = (nf_dcnt >= tb_decim_w - 32'd1);
-wire        dbg_nn_w;      // 0x95 触发脉冲
 // [10-17] 识别来源切换: 0=TY 规则法(默认, 与升级前一致) 1=神经网络
 wire        ty_src_sel_w;
 wire        win_auto_w;      // [0x97] 自适应选窗
@@ -220,8 +232,6 @@ wire [1:0]  win_now_w;        // [10-18] 实际生效的窗 -> 上报 WIN= 行
 wire [1:0]  nn_as_ty = {nn_cls_r[1], ~(nn_cls_r[0] ^ nn_cls_r[1])};
 assign ty_show = ty_src_sel_w ? nn_as_ty : wave_type_w;
 // 0x94/0x95 共用同一条上报通路, 用这个标志选数据源
-reg         dbg_is_nn;
-reg         dbg_req_d;
 
     // ---- 0.7c [0x8E] 幅度谱帧相关线(同样必须先声明后使用; 下方 3.7/3.9 会用到) ----
     wire        spec_req_w;    // 0x8E 请求脉冲(cmd_decoder 输出)

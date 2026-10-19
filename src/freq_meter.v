@@ -27,12 +27,19 @@ module freq_meter #(
     output wire [31:0] dbg_h_tick,
     output wire [31:0] dbg_p_tick
 );
+    // [10-19 修复] 下面这些 reg 原来声明在 35~122 行之间，但 30 行起就要用。
+    //   Verilog-2001 会把未声明标识符隐式成 1 位 wire：
+    //     st      本来是 3 位 —— 被按 1 位处理，状态机只剩两个状态；
+    //     max_v   本来是 8 位 —— 峰峰值直接算错。
+    //   Vivado 恰好取了后面的显式声明，所以实测是对的；但不能靠运气。
+    reg [2:0]  st;              // 主状态机
+    reg [31:0] hi_lat, r_lat;   // 本帧锁存(高电平计数 / 最长连续高电平)
+    reg [7:0]  max_v, min_v;    // 帧内最大/最小样点
     assign dbg_st     = st;
     assign dbg_h_tick = hi_lat;    // 诊断: 高电平计数
     assign dbg_p_tick = r_lat;     // 诊断: 最长连续高电平
 
     // ============ 状态 ============
-    reg [2:0] st;
     localparam ST_COARSE = 3'd0;
     localparam ST_FINE   = 3'd1;
     localparam ST_CALC   = 3'd2;
@@ -99,7 +106,6 @@ module freq_meter #(
     reg [31:0] high_cnt;     // 高电平时钟数
     reg [31:0] run_cnt;      // 当前连续高电平长度
     reg [31:0] max_run;      // 最长连续高电平
-    reg [31:0] hi_lat, r_lat;   // 本帧锁存
     reg [31:0] win_lat;         // 本帧窗口长度
 
     // ============ 粗测/细测 ============
@@ -119,7 +125,6 @@ module freq_meter #(
         .num(div_num), .den(div_den), .q(div_q), .done(div_done)
     );
 
-    reg [7:0] max_v, min_v;
     wire [23:0] clamp_val = (div_q > 24'd9_999_999) ? 24'd9_999_999 : div_q[23:0];
 
     // 减法循环用
