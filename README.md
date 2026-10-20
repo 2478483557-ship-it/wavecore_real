@@ -84,6 +84,20 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 - 编码双轨：仓库 **UTF-8** / Vivado 工程 **GBK**（转换脚本 `hw_analysis/to_gbk.py`）
 - 上位机需 **Python 3.8**（含 pyserial / numpy / matplotlib）
 
+> ⚠️ **ROM 初始化文件用了绝对路径。**
+> `src/hann_rom.v`、`blackman_rom.v`、`sine_rom.v`、`twiddle_rom.v`、`wave_nn.v`
+> 这 5 个文件里的 `$readmemh` 写死为 `D:/Verilog_project/wavecore/src/*.hex`，共 9 处。
+>
+> **换机器或换目录时，先跑一次重定位：**
+> ```
+> python build/relocate.py --root <你的工程根目录>          # 预览
+> python build/relocate.py --root <你的工程根目录> --apply  # 执行
+> ```
+>
+> 为什么必须显式处理：`$readmemh` 找不到文件时**综合可能不报错**，
+> ROM 会变成 X / 0，上板后波形全错却不报错 —— 这类故障极难定位。
+> 重定位后请确认综合日志里没有 readmem 相关警告。
+
 ## 怎么玩（快速上手）
 
 **前置**：板子已固化 Flash，**插 USB 上电即出数据**（460800），无需 Vivado。
