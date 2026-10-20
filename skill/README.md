@@ -1641,3 +1641,38 @@ end
 - **教训**：**加状态时先看 state 的位宽**。加第 5 个状态（2 位装不下）是最容易踩的点。
 - **来源**：WaveCore 2026-10-19
 
+## SK-071 · 固化脚本「从没成功过」时，别怀疑硬件，先查三个一致性
+
+- **背景**：`program_flash.bat` 一次也没跑通过，但项目里写着"Flash 固化已完成"。
+  原因很简单：**那条路一直走的是 GUI，脚本从没被执行过**。
+  没人跑过 = 没人验证过 = 里面可以有多个 bug 共存。
+
+- **第一处：`write_cfgmem` 的 interface 必须等于 bit 里的 SPI_BUSWIDTH**
+  ```
+  XDC:        set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4
+  gen_mcs:    write_cfgmem -interface SPIx1        ← 冲突
+  → ERROR [Writecfgmem 68-20] ... has to be set to "1"
+  ```
+  **判断依据**：报错里直接告诉你 bit 里是多少、要求是多少，照着改就行。
+
+- **第二处：`program_hw_cfgmem` 前要设齐 6 个 PROGRAM 参数**
+  漏 `ADDRESS_RANGE {use_file}` 会报
+  `[Labtools 27-3347] Flash Programming Unsuccessful: Failure to set flash parameters`。
+  完整清单：`BLANK_CHECK / ERASE / CFG_PROGRAM / VERIFY / CHECKSUM /
+  ADDRESS_RANGE / PRM_FILE / UNUSED_PIN_TERMINATION / FILES`。
+
+- **第三处：flash 型号名要问器件，不要问 `get_cfgmem_parts`**
+  - `get_cfgmem_parts`（无参）= 软件支持的全部型号，**包含本器件不支持的**
+  - `get_cfgmem_parts -of_objects $hw_device` = **本器件真正支持的**
+  - 例：`mt25ql128-qspi-x4-single` 在全局列表里，但 xc7a35t 不支持；
+    `mt25ql128-spi-x1_x2_x4` 才是它对的那个。
+  - 用错的后果：`[Labtoolstcl 44-655] Cfgmem part ... is not supported for device`
+
+- **排查顺序**（省时间）：
+  1. 先 `write_cfgmem` —— 报错就是 interface 与 buswidth 不一致
+  2. 再只做 `BLANK_CHECK`（纯读，最安全）—— 能通说明参数/型号对了，问题在写入
+  3. 都失败就扫型号 + 降 JTAG 频率（`set_property PARAM.FREQUENCY`）
+  4. **全都不行 → 断电重启，在 FPGA 未配置的状态下立刻固化**
+
+- **来源**：WaveCore 2026-10-20
+

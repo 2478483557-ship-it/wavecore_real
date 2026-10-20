@@ -12,7 +12,7 @@ if {![file exists $bit]} {
 }
 
 # mt25ql128 = 128Mbit = 16MB
-write_cfgmem -force -format MCS -interface SPIx1 -size 16 \
+write_cfgmem -force -format MCS -interface SPIx4 -size 16 \
     -loadbit "up 0x0 $bit" -file $mcs
 
 puts "=========================================================="

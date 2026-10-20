@@ -155,7 +155,7 @@ wavecore/
 ├── board/             # XDC、引脚表、串口协议 v1.22、复验清单、flash_guide
 ├── host/              # 上位机：protocol.py + 一键工具（波形/仪表/频谱/瀑布图）
 ├── hw_analysis/       # 验证脚本与数值金标准（probe_interp / verify_hann_window / check_protocol_frames …）
-├── skill/             # 技能包 SK-001~069（抗噪/触发/FFT四坑/固化/量化定标/时序/文档一致性等）
+├── skill/             # 技能包 SK-001~071（抗噪/触发/FFT四坑/固化/量化定标/时序/文档一致性等）
 └── report/            # 设计报告 / 演示材料包 / 精度标定 / 技术专题 / LLM 记录（索引见 report/README.md）
 ```
 
@@ -194,7 +194,7 @@ wavecore/
 - **精度标定**：`report/accuracy_calibration.md`
 - **工程问题复盘**：`report/engineering_challenges.md`（12 个真实案例）
 - **LLM 协作记录**：`report/llm_collab_log.md`
-- **技能包（踩坑总结）**：`skill/README.md`（**SK-001~069**，69 条）
+- **技能包（踩坑总结）**：`skill/README.md`（**SK-001~071**，72 条）
 
 ## License
 

@@ -36,6 +36,13 @@ set_property PROGRAM.ERASE       1 $cfg
 set_property PROGRAM.CFG_PROGRAM 1 $cfg
 set_property PROGRAM.VERIFY      1 $cfg
 set_property PROGRAM.CHECKSUM    0 $cfg
+# [2026-10-20 修复] 下面三个参数原来漏了 —— 缺 ADDRESS_RANGE 会让
+#   program_hw_cfgmem 报 "27-3347 Failure to set flash parameters"。
+#   这三个是 board/flash_guide.md 里经过实测的那份 Tcl 才有的，
+#   本脚本当初照抄时漏掉了，导致批量固化从来没成功过（只能走 GUI）。
+set_property PROGRAM.ADDRESS_RANGE {use_file} $cfg
+set_property PROGRAM.PRM_FILE {} $cfg
+set_property PROGRAM.UNUSED_PIN_TERMINATION {pull-none} $cfg
 set_property PROGRAM.FILES [list $mcs] $cfg
 
 program_hw_cfgmem -hw_cfgmem $cfg

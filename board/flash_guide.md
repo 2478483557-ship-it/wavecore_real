@@ -45,10 +45,30 @@ program_hw_cfgmem -hw_cfgmem [current_hw_cfgmem]
 ## 三、上电验证
 断电 → 重新上电 → XCOM(460800) → 应自动出 F/D/W/TY 行；发 `5A A5 8B 00 01 01 8D` 扫频可跑 = 固化成功
 
+## 三·五、批量脚本的两个内置 bug（2026-10-20 修复）
+
+> 背景：`program_flash.bat` **从来没有成功跑通过**。之前的固化都是走 GUI（方式 A）。
+> 所以脚本里的错误一直没被发现。批量固化若有问题，先对照下面两条。
+
+| # | 位置 | 错在哪 | 现象 | 修法 |
+|---|---|---|---|---|
+| 1 | `gen_mcs.tcl` | 写的是 `-interface SPIx1`，但 XDC 里 `BITSTREAM.CONFIG.SPI_BUSWIDTH = 4`（本节上文也是 SPIx4） | `ERROR: [Writecfgmem 68-20] SPI_BUSWIDTH property is set to "4" ... has to be set to "1"` | 改成 `-interface SPIx4` |
+| 2 | `program_flash.tcl` | 漏了 3 个 `PROGRAM.*` 参数 | `ERROR: [Labtools 27-3347] Failure to set flash parameters` | 补 `ADDRESS_RANGE {use_file}` / `PRM_FILE {}` / `UNUSED_PIN_TERMINATION {pull-none}` |
+
+**核对方法**：`write_cfgmem` 的 interface 必须与 bit 里的 SPI_BUSWIDTH 一致；
+`program_hw_cfgmem` 前把 `PROGRAM.*` 六个参数全部设齐（见方式 B 的清单）。
+
+**⚠️ 仍未解决**：补完上述两处后，`program_hw_cfgmem` 依然报 27-3347，
+且**换遍所有 128M/256M 型号、把 JTAG 降到 1.5MHz 都一样**。
+也就是说不是型号名问题、也不是时钟问题 —— 怀疑与 FPGA 当前已配置的状态有关。
+下一步验证：**断电重启后（FPGA 未配置状态）立刻执行固化**。
+
+---
+
 ## 四、踩过的坑（按出现顺序）
 | 现象 | 原因 | 解法 |
 |---|---|---|
 | Add Configuration Memory Device 灰 | ①目标被自动关闭 ②**器件上已有 cfgmem 节点** | `open_hw_target`；**右键已有节点 Remove 后再 Add** |
 | PROGRAM.FILES 用 .bit 报错 | Flash 只认 .mcs/.bin | 先 write_cfgmem 生成 |
-| "Failure to set flash parameters" | 残留 cfgmem 状态脏 | 按方式 A（GUI）或 B（先 delete）重来 |
+| "Failure to set flash parameters" | ①残留 cfgmem 脏 ②**脚本漏设置 3 个 PROGRAM 参数** ③FPGA 已配置时偶发 | 先 delete；对照 §三·五 补齐参数；仍失败则断电后立刻重试 |
 | 错误后 target 自动关闭 | Vivado 行为 | 重新 open_hw_target 再继续 |
