@@ -37,15 +37,41 @@ def main():
         print("工程 src 目录不存在:", DST_SRC)
         return 1
 
+    # [2026-10-20 修复·重要] 仓库把约束文件放在 board/，而工程放在 src/，
+    #   原来的循环只扫仓库的 src/，于是 **wavecore.xdc 从来没被同步过** ——
+    #   工程里那份一直停留在 09-15，比仓库多一行 SPI_BUSWIDTH 4。
+    #   后果：从源码包重新综合得到的 bit 与交付的 bit 不一致（x1 vs x4 启动）。
+    #   这里补一条显式映射，让约束文件也走同一条同步路径。
+    BOARD_SRC = os.path.join(os.path.dirname(REPO_SRC), "board")
+    EXTRA_MAP = {"wavecore.xdc": os.path.join(BOARD_SRC, "wavecore.xdc")}
+
     only = sys.argv[1:]
     names = sorted(os.listdir(REPO_SRC))
     if only:
         names = [n for n in names if n in set(only)]
-        missing = set(only) - set(names)
+        # board/ 里映射过来的文件不算"缺失"，否则明明同步成功还打印"跳过"
+        missing = set(only) - set(names) - set(EXTRA_MAP.keys())
         for m in sorted(missing):
             print("  [跳过] 仓库里没有:", m)
 
     n_txt = n_raw = n_skip = 0
+
+    # 先把 board/ 下的约束文件同步过去（见上方注释）
+    for dst_name, src_path in EXTRA_MAP.items():
+        if only and dst_name not in set(only):
+            continue
+        if not os.path.isfile(src_path):
+            continue
+        dst_path = os.path.join(DST_SRC, dst_name)
+        txt = open(src_path, "r", encoding="utf-8").read()
+        try:
+            with open(dst_path, "w", encoding="gbk", errors="strict", newline="\r\n") as f:
+                f.write(txt)
+            print("  [GBK ] %-28s %6d bytes  (来自 board/)" % (dst_name, len(txt.encode("gbk"))))
+            n_txt += 1
+        except UnicodeEncodeError as exc:
+            print("  [失败] %s 含 GBK 编不了的字符: %s" % (dst_name, exc))
+
     for name in names:
         sp = os.path.join(REPO_SRC, name)
         if not os.path.isfile(sp):
