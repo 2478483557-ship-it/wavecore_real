@@ -87,73 +87,45 @@ program_hw_cfgmem -hw_cfgmem [current_hw_cfgmem]
 
 ---
 
-## 三·六、★ 探针（.ltx）干扰固化 —— 2026-10-20 实测结论
+## 三·六、探针（.ltx）报错是真的，但它**不是**固化失败的原因
 
-> 这一节是**真正把固化跑通的路径**。上面的方式 A/B 都受这个问题影响。
+> ⚠️ **这一节曾写成「探针是根因」，是错的，2026-10-20 22:57 实测推翻。**
 
-### 现象
+### 确实存在的现象
 
-打开 Hardware Manager 立刻报：
-
-```
-ERROR: [Common 17-48] File not found:
-       D:/Verilog_project/wavecore/wavecore.runs/impl_1/board_top.ltx
-```
-
-**`.ltx` 是 ILA 的探针文件。** 本项目 `ILA_EN = 1'b0`（ILA 已关），
-所以 Vivado **根本不会生成这个文件**。
-
-但硬件管理器一打开，Vivado 会去认当前器件里跑的设计有没有 debug core：
+打开 Hardware Manager 会报：
 
 ```
-INFO: [Labtools 27-2302] Device xc7a35t is programmed with a design
-                          that has 1 ILA core(s).
+ERROR: [Common 17-48] File not found: .../impl_1/board_top.ltx
 ```
 
-**注意这句**：器件里跑的是**从 Flash 加载的旧设计**，那个设计当年是开着 ILA 的。
-Vivado 发现 ILA → 去找对应的 `.ltx` → 找不到 → 报错 → **硬件会话进入异常状态**，
-后续 `program_hw_cfgmem` 就报 `27-3347 Failure to set flash parameters`。
+`.ltx` 是 ILA 探针文件。本项目 `ILA_EN = 1'b0`，本来就不会生成。
+器件里跑的是从 Flash 加载的旧设计（当年开着 ILA），所以 Vivado 会去找探针。
 
-### 正确流程（★ 照这个做）
+**这个报错是真的，但它只是症状，不影响固化。**
+
+### 为什么可以排除
+
+22:57 做了一次干净对照：先用 `program_device.bat` 烧入**确定没有 ILA** 的新 bit，
+Vivado 明确报：
 
 ```
-① 烧录时不要挂探针
-     GUI 里不要点 "Specify probes file"，探针栏留空
-     —— 或者干脆先做下面第 ② 步
-
-② 先烧一个「没有 ILA」的 bit 到 SRAM
-     program_device.bat
-     烧完后器件会报 "has no supported debug core(s)" ← 这是好事
-     此时 Vivado 不再去找 .ltx
-
-③ 再固化 Flash
-     右键 xc7a35t_0 → Add Configuration Memory Device
-     → mt25ql128-spi-x1_x2_x4 → Program
-
-④ 断电重启验证
-     上电 → 发 0x8A → 应出现 SF / S2 / S3 / WIN= 四行
+INFO: [Labtools 27-1434] Device xc7a35t is programmed with a design
+                          that has NO supported debug core(s) in it.
 ```
 
-### 为什么「烧完再加文件」也行
+**在这个「绝对没有探针需求」的状态下，固化依然失败：**
 
-固化完成后当前器件里已经是**没有 ILA 的新设计**，此时再打开
-`Add Configuration Memory Device` 或重新 attach，Vivado 不会再找 `.ltx`
-（因为新 bit 里 `ILA_EN=0`，没有 debug core）。
+```
+ERROR: [Labtools 27-3347] Failure to set flash parameters
+```
 
-### ⚠️ 关于批处理脚本（诚实记录）
+→ **探针不是原因。** 有 ILA 时失败、无 ILA 时也失败，两者无关。
 
-`program_device.bat` + `program_flash.bat` 这条自动路线，
-**在有 ILA 和没 ILA 两种状态下都报过 27-3347**：
+### 那 `.ltx` 报错怎么消掉
 
-| 日志 | 器件 ILA 状态 | 27-3347 |
-|---|---|---|
-| 22:11 | no supported debug core | 是 |
-| 22:1x | no supported debug core | 是 |
-| 22:25 | 1 ILA core | 是 |
-| 22:26 | 1 ILA core | 是 |
-
-所以**探针不是批处理路径失败的唯一原因**，GUI 能成功可能是走了不同的内部流程。
-**结论：固化优先用 GUI，不要依赖批处理脚本。**
+它只在「器件里跑着带 ILA 的旧设计」时出现。烧一次 `ILA_EN=0` 的新 bit
+（`program_device.bat`）就不会再报。**这只是让日志干净，不解决固化。**
 
 ---
 
@@ -162,5 +134,6 @@ Vivado 发现 ILA → 去找对应的 `.ltx` → 找不到 → 报错 → **硬�
 |---|---|---|
 | Add Configuration Memory Device 灰 | ①目标被自动关闭 ②**器件上已有 cfgmem 节点** | `open_hw_target`；**右键已有节点 Remove 后再 Add** |
 | PROGRAM.FILES 用 .bit 报错 | Flash 只认 .mcs/.bin | 先 write_cfgmem 生成 |
-| `.ltx File not found` + `27-3347` | **器件里跑着带 ILA 的旧设计，Vivado 去找探针文件找不到，会话被搞坏** | **见 §三·六：先烧无 ILA 的 bit，或烧录时不挂探针** |
+| `.ltx File not found` | 器件里跑着带 ILA 的旧设计，而本次综合 `ILA_EN=0` 没生成探针 | 烧一次无 ILA 的 bit 即消失；**与 27-3347 无关** |
+| `27-3347`（无 ILA 时仍出现） | **原因仍未查明**，见 §三·五 排除清单 | 暂用 GUI；批处理路线不可靠 |
 | 错误后 target 自动关闭 | Vivado 行为 | 重新 open_hw_target 再继续 |
