@@ -47,6 +47,12 @@ set_property -dict {IOSTANDARD LVCMOS33 PACKAGE_PIN D17} [get_ports uart_txd]
 # --- UART RX from CH340 (LVCMOS33, B16 bank, M5 commands) ---
 set_property -dict {IOSTANDARD LVCMOS33 PACKAGE_PIN E14} [get_ports uart_rxd]
 
+# [2026-10-20 补录] 板载 Flash 用 x4 模式启动。
+#   这一行原来只存在于 D 盘工程、没进仓库，导致
+#   「从源码包重新综合 → 生成的 bit 与交付的 bit 不一致」。
+#   write_cfgmem 的 -interface 必须与这里保持一致（SPIx4）。
+set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4 [current_design]
+
 ## ===== F1 passthrough port: FPGA<->STM32 (2026-09-15) =====
 set_property -dict {PACKAGE_PIN N13 IOSTANDARD LVCMOS33} [get_ports uart_stm32_txd]
 set_property -dict {PACKAGE_PIN R14 IOSTANDARD LVCMOS33} [get_ports uart_stm32_rxd]

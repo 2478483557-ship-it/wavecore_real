@@ -58,10 +58,32 @@ program_hw_cfgmem -hw_cfgmem [current_hw_cfgmem]
 **核对方法**：`write_cfgmem` 的 interface 必须与 bit 里的 SPI_BUSWIDTH 一致；
 `program_hw_cfgmem` 前把 `PROGRAM.*` 六个参数全部设齐（见方式 B 的清单）。
 
-**⚠️ 仍未解决**：补完上述两处后，`program_hw_cfgmem` 依然报 27-3347，
-且**换遍所有 128M/256M 型号、把 JTAG 降到 1.5MHz 都一样**。
-也就是说不是型号名问题、也不是时钟问题 —— 怀疑与 FPGA 当前已配置的状态有关。
-下一步验证：**断电重启后（FPGA 未配置状态）立刻执行固化**。
+**⚠️ 仍未解决 —— 已排除清单（2026-10-20 22:00~22:35 实测）**
+
+补完上述两处后，`program_hw_cfgmem` 依旧报 27-3347。逐项排除如下：
+
+| 排除项 | 怎么排除的 | 结果 |
+|---|---|---|
+| 型号名 | 用 `get_cfgmem_parts -of_objects $dev` 取本器件支持的；再扫遍 8 个 128M/256M 型号 | 全失败 |
+| JTAG 时钟太快 | `set_property PARAM.FREQUENCY` 依次 15M / 6M / 3M / 1.5M | 全失败 |
+| 写入参数不全 | 9 个 `PROGRAM.*` 全部显式设置并回读确认 | 全失败 |
+| 只是写入的问题 | 改成**只做 BLANK_CHECK**（纯读） | **也失败** |
+| cfgmem 残留脏状态 | 杀干净 `hw_server`/`cs_server` 后全新会话 | 失败 |
+| `refresh_hw_device` 干扰 | 跳过 refresh 直接建 cfgmem | 失败 |
+| mcs 容量参数 | `-size` 单位是 **MBytes**，`16` = 16MB = 128Mbit，本来就对 | 不是问题 |
+| FPGA 已配置状态 | 断电重启后立刻执行 | 失败 |
+
+**关键推论**：错误发生在"设置 flash 参数"阶段，**还没开始读文件**。
+连只读的 blank check 都过不去 → **不是文件、不是型号、不是参数，是 JTAG 到 Flash 这条链路本身没通。**
+
+**下一步（按成功率排序）**：
+1. **走 GUI（方式 A）** —— 文档记录 2026-09-20 用 GUI 成功过，这是唯一验证过的路径
+2. 若 GUI 也失败：**上电时按住板上 PROG/RESET 键不放**，让 FPGA 保持未配置状态，
+   此时 Flash 处于上电默认 SPI 模式，再执行固化
+3. 仍失败：用示波器看 Flash 的 CS/CLK 上电后有没有活动
+
+---
+
 
 ---
 
