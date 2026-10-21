@@ -1188,6 +1188,34 @@ class WaveCoreApp:
             self._invalidate_self_fft()
             self._update_applied_settings()
 
+    def _refresh_pretrigger_hint(self):
+        """刷新预触发说明。
+
+        [10-21] 实测发现：**自由模式下预触发不起作用**。
+          实测上升沿位置：自由模式 504/491/535/529（散布 ±20 点）；
+                        上升沿模式 513/513/513（完全固定）。
+        这是合理的 —— 没有触发点就无从谈起"触发之前"。
+        但界面上原来只是照常显示档位，用户会以为"预触发不准"。
+        """
+        index = self.current_pretrigger_index
+        label = self.PRETRIGGER_CHOICES[index][0]
+        ratio = self.PRETRIGGER_RATIO[index]
+
+        if self.applied_trigger_name == "自由":
+            self.pretrigger_info_var.set(
+                f"预触发 {label}：自由模式没有触发点，此设置不生效 —— "
+                "先选『上升沿』或『下降沿』"
+            )
+            return
+
+        if index == 0:
+            self.pretrigger_info_var.set("预触发 0%：帧首点 = 触发点（与升级前一致）")
+        else:
+            self.pretrigger_info_var.set(
+                f"预触发 {label}：触发点位于帧内第 {int(1024 * ratio)} 点，"
+                f"可见触发沿左侧的波形"
+            )
+
     def set_trigger_choice(self):
         choices = {"自由": 0, "上升沿": 1, "下降沿": 2}
         name = self.trigger_choice_var.get()
@@ -1197,6 +1225,7 @@ class WaveCoreApp:
             return
         if self._send(command_set_trigger(trigger_mode), f"已设置触发模式：{name}"):
             self.applied_trigger_name = name
+            self._refresh_pretrigger_hint()
             self._update_applied_settings()
             if self.latest_waveform_samples and self.latest_waveform_sample_rate_hz:
                 self._draw_waveform(
@@ -1546,14 +1575,7 @@ class WaveCoreApp:
             return
 
         self.current_pretrigger_index = index
-        ratio = self.PRETRIGGER_RATIO[index]
-        if index == 0:
-            self.pretrigger_info_var.set("预触发 0%：帧首点 = 触发点（与升级前一致）")
-        else:
-            self.pretrigger_info_var.set(
-                f"预触发 {label}：触发点位于帧内第 {int(1024 * ratio)} 点，"
-                f"可见触发沿左侧的波形"
-            )
+        self._refresh_pretrigger_hint()
         self._update_applied_settings()
 
         # 预触发档位改变后，已有波形图不再代表新设置，提示重新请求
