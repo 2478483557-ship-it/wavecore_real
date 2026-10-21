@@ -154,7 +154,40 @@ wire [15:0] nf_f0, nf_f1, nf_f2, nf_f3, nf_f4, nf_f5;
 wire        nf_done, nn_done;
 wire [1:0]  nn_cls;
 reg  [31:0] nf_dcnt;       // 独立的抽取计数(与 self_fft 的采集互不干扰)
-wire        nf_tick = (nf_dcnt >= tb_decim_w - 32'd1);
+// ---- [10-21] 波形识别的自适应抽取比 ----
+// 目的：让每周期样点数 spp = (50MHz/decim)/F 始终 ≥ 32。
+// 依据：数值扫描表明 spp=8 时正弦与三角的判据区间完全重合（0.25~0.50），
+//       spp≥32 才干净分离。实测原地固定 decim=1000（fs=50kHz），
+//       正弦/三角在 5kHz 就崩，三档全对最高只到 3kHz。
+//
+// 取值原则：decim ≈ 390625/F，即 spp ≈ 128、窗口内恒定 16 个周期。
+//   为省除法器，按倍频程分档取 2 的幂；每档顶端 spp ≈ 64，底端 ≈ 128。
+//   低频段 decim 上限 1023（10 位计数器），此时 100Hz 窗内仍有 4 个周期，
+//   与原设计（decim=1000）相当。
+// 推导与实测见 report/wave_id_limit_2026-10-21.md。
+reg [9:0] wid_decim;
+always @(*) begin
+    if      (meas_freq < 24'd763)    wid_decim = 10'd1023;
+    else if (meas_freq < 24'd1526)   wid_decim = 10'd512;
+    else if (meas_freq < 24'd3052)   wid_decim = 10'd256;
+    else if (meas_freq < 24'd6104)   wid_decim = 10'd128;
+    else if (meas_freq < 24'd12207)  wid_decim = 10'd64;
+    else if (meas_freq < 24'd24414)  wid_decim = 10'd32;
+    // [10-21 实测] 抽取比不能低于 32。
+    //   上板对比：decim=32（fs=1.56MHz）→ 24kHz 稳定 5/5；
+    //             decim=16（fs=3.13MHz）→ 26kHz 全错 0/5，而 spp 反而更高（120）。
+    //   说明限制来自**采样率**而非样点数：DDS 输出是 50MHz 台阶波形，
+    //   采得越快，台阶/毛刺占比越大，形状统计被破坏。
+    //   故 fs 上限锁在 1.5625MHz → spp≥32 的最高频率约 48.8kHz。
+    //   （若用外部信号源而非板上回环，这个上限可能更高，待验。）
+    else                             wid_decim = 10'd32;
+end
+
+// [10-21] 神经网络的特征提取也改走自适应抽取。
+//   原来固定 tb_decim_w（T1=1000 → 50kHz），每周期样点随频率掉，
+//   实测网络在 20kHz 以上全错。
+//   注意 not 用 tb_decim_w：那是时基，与波形识别无关。
+wire        nf_tick = (nf_dcnt >= ({22'd0, wid_decim} - 32'd1));
 
 always @(posedge sys_clk or negedge sys_rst_n) begin
     if (!sys_rst_n) nf_dcnt <= 32'd0;
@@ -481,34 +514,6 @@ assign ty_show = ty_src_sel_w ? nn_as_ty : wave_type_w;
     );
     // TX 引脚 3 路互斥: 波形 > 谱峰 > 测量
     // ---- 3.11b 波形自动识别(9/20): 占比法, 输出 TY= 行 ----
-    // ---- [10-21] 波形识别的自适应抽取比 ----
-    // 目的：让每周期样点数 spp = (50MHz/decim)/F 始终 ≥ 32。
-    // 依据：数值扫描表明 spp=8 时正弦与三角的判据区间完全重合（0.25~0.50），
-    //       spp≥32 才干净分离。实测原地固定 decim=1000（fs=50kHz），
-    //       正弦/三角在 5kHz 就崩，三档全对最高只到 3kHz。
-    //
-    // 取值原则：decim ≈ 390625/F，即 spp ≈ 128、窗口内恒定 16 个周期。
-    //   为省除法器，按倍频程分档取 2 的幂；每档顶端 spp ≈ 64，底端 ≈ 128。
-    //   低频段 decim 上限 1023（10 位计数器），此时 100Hz 窗内仍有 4 个周期，
-    //   与原设计（decim=1000）相当。
-    // 推导与实测见 report/wave_id_limit_2026-10-21.md。
-    reg [9:0] wid_decim;
-    always @(*) begin
-        if      (meas_freq < 24'd763)    wid_decim = 10'd1023;
-        else if (meas_freq < 24'd1526)   wid_decim = 10'd512;
-        else if (meas_freq < 24'd3052)   wid_decim = 10'd256;
-        else if (meas_freq < 24'd6104)   wid_decim = 10'd128;
-        else if (meas_freq < 24'd12207)  wid_decim = 10'd64;
-        else if (meas_freq < 24'd24414)  wid_decim = 10'd32;
-        // [10-21 实测] 抽取比不能低于 32。
-        //   上板对比：decim=32（fs=1.56MHz）→ 24kHz 稳定 5/5；
-        //             decim=16（fs=3.13MHz）→ 26kHz 全错 0/5，而 spp 反而更高（120）。
-        //   说明限制来自**采样率**而非样点数：DDS 输出是 50MHz 台阶波形，
-        //   采得越快，台阶/毛刺占比越大，形状统计被破坏。
-        //   故 fs 上限锁在 1.5625MHz → spp≥32 的最高频率约 48.8kHz。
-        //   （若用外部信号源而非板上回环，这个上限可能更高，待验。）
-        else                             wid_decim = 10'd32;
-    end
 
     wave_id u_wid (
         .clk      (sys_clk    ),
