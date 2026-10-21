@@ -1429,9 +1429,14 @@ class WaveCoreApp:
         # [10-18] 只给短状态。原来那段"多数频率下判为 Hann…试 976Hz…"太长,
         #   一勾选就把整行撑宽、整个窗口被拉大。说明写在文档里, 这里只留 4 个字。
         if auto:
-            # 自适应下实际用哪个窗, 要等硬件判完才知道 —— 跑一次 FFT，
-            # 靠回传的 WIN= 行更新这一行小字。
+            # 自适应下实际用哪个窗, 要等硬件判完才知道 —— 靠回传的 WIN= 行更新。
             self.win_used_var.set("待判定")
+            # [10-21 修复] **必须主动跑一次 FFT**。
+            #   原来只把文字设成"待判定"就不管了：WIN= 行只在自研 FFT 跑完时
+            #   由硬件补发，用户不手动点「运行自研 FFT」，这一行永远是"待判定"。
+            #   切换识别来源那边早就踩过同一个坑（见 on_wave_src_changed），
+            #   这里漏了同样的处理。
+            self._send(command_run_self_fft(), "自适应已开，正在判定用哪个窗")
         self._refresh_window_info()
 
     def on_wave_src_changed(self, event=None):

@@ -40,6 +40,15 @@ module spec_avg #(
 
     //---- 流水线寄存器 ----
     reg [23:0] q;                     // S2: amem[addr] 的旧累加
+
+    // [10-21 补] 读口去掉异步复位后，q 在上电瞬间是 X。
+    //   若不初始化，第一拍的 nsum = q - (q>>SH) + mag_1 就是 X，
+    //   nsum_r 打一拍后若恰好 we_2 有效，X 就被写回 amem ——
+    //   之后整个平均器永久带 X，找峰比较全部失效，自研 FFT 卡死不再上报。
+    //   这与 fft_demo 的 m_q 不同：那里 m_q 只喂给组合乘法，X 不影响状态机。
+    //   initial 对综合有效（写成 FF 的 INIT 属性），且 q 是普通寄存器，
+    //   不参与块 RAM 推断，不会把存储器打回触发器。
+    initial q = 24'd0;
     reg        we_1, we_2;
     reg [8:0]  addr_1, addr_2;
     reg [16:0] mag_1;
