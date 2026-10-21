@@ -309,6 +309,8 @@ assign ty_show = ty_src_sel_w ? nn_as_ty : wave_type_w;
         .dbg_read    (dbg_read_w  ),   // [0x94] 状态回读
         .dbg_nn      (dbg_nn_w    ),   // [0x95] 神经网络结果
         .ty_src_sel  (ty_src_sel_w),   // [0x96] 识别来源
+        .win_auto    (win_auto_w  ),   // [0x97] 自适应选窗 (之前漏接, 功能一直不生效)
+        .avg_en      (avg_en_w    ),   // [0x98] 谱平均     (之前漏接, 功能一直不生效)
         .sf_run      (sf_run_w    ),
         .sweep_en    (sweep_en_w  ),
         .cal_kn      (cal_kn_w    ),

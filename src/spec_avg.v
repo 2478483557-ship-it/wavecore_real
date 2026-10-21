@@ -50,15 +50,43 @@ module spec_avg #(
     wire [23:0] dec  = q >> SH;
     wire [23:0] nsum = q - dec + {7'd0, mag_1};
 
+    // [10-21 修复] 读口必须**单独**放在一个不带异步复位的 always 里。
+    //
+    //   原来 q <= amem[addr] 写在带 negedge rst_n 的块里，Vivado 推断 BRAM 时
+    //   要求读数据寄存器不能有异步复位（BRAM 输出寄存器不支持），于是直接放弃
+    //   BRAM，把 512x24 铺成 12288 个 FDRE。层次报告实测：
+    //       u_savg  LUT 3655 / FF 12597 / RAMB 0
+    //   这一项独占全设计 LUT 的 33%、FF 的 65%，把整片资源从 35% 推到 53%。
+    //
+    //   之前没暴露，是因为 avg_en 悬空成 0，整个平均器被综合器当死逻辑裁掉了。
+    //   把 0x98 接通后它才真的存在，代价也就露出来了。
+    //
+    //   修法与 fft_demo 的 f_ram 同理：**读写分开写，读口去复位**。
+    always @(posedge clk) begin
+        q <= amem[addr];                 // 读口：无复位
+    end
+
+    // [10-21 二次修复] 写口也必须独立成一块、且**不带异步复位**。
+    //
+    //   第一次只把读口拆出来时，综合日志仍报：
+    //       "RAM is sensitive to asynchronous reset signal. this RTL style
+    //        is not supported." -> RAM "amem_reg" dissolved into registers
+    //   因为 amem[addr_2] <= nsum_r 还留在带 negedge rst_n 的块里。
+    //
+    //   fft_demo 的 f_ram 能进 BRAM，正是读写两个 always 都没有复位。
+    always @(posedge clk) begin
+        if (we_2) amem[addr_2] <= nsum_r;  // 写口：无复位
+    end
+
+    // 其余流水线寄存器照常带复位
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            q <= 24'd0; we_1 <= 1'b0; we_2 <= 1'b0;
+            we_1 <= 1'b0; we_2 <= 1'b0;
             addr_1 <= 9'd0; addr_2 <= 9'd0; mag_1 <= 17'd0; en_1 <= 1'b0;
             nsum_r <= 24'd0;
         end
         else begin
             //---- S1 -> S2 ----
-            q      <= amem[addr];
             we_1   <= we;
             addr_1 <= addr;
             mag_1  <= mag;
@@ -68,9 +96,6 @@ module spec_avg #(
             nsum_r <= nsum;
             we_2   <= we_1;
             addr_2 <= addr_1;
-
-            //---- S3: 写回 ----
-            if (we_2) amem[addr_2] <= nsum_r;
         end
     end
 
