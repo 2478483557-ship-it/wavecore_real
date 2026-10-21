@@ -236,16 +236,27 @@ def _fixed_label(parent, var, width, **kwargs):
     return ttk.Label(parent, textvariable=var, width=width, anchor="w", **kwargs)
 
 
-def _measurement_card(parent, column, title, variable, row=0):
-    """测量卡片。模块级函数（原 @staticmethod 在 Py3.8 类体内不能直接调用）。"""
+def _measurement_card(parent, column, title, variable, row=0, width=None):
+    """测量卡片。模块级函数（原 @staticmethod 在 Py3.8 类体内不能直接调用）。
+
+    [10-21] 增加 width：识别结果那一格的文字会变长（"1：正弦" ↔
+    "3：其他（…超 25kHz…）"），pack 会跟着重排，整行卡片被拉宽再缩回，
+    看起来就是"界面一直抖"。给它一个固定字符宽度，文字变化时卡片不动。
+    """
     card = ttk.LabelFrame(parent, text=title, padding=(10, 6))
     card.grid(row=row, column=column, sticky="nsew", padx=4, pady=3)
-    ttk.Label(card, textvariable=variable, style="Value.TLabel").pack()
+    label = ttk.Label(card, textvariable=variable, style="Value.TLabel")
+    if width:
+        label.configure(width=width, anchor="w")
+    label.pack()
     return card
 
 
 class WaveCoreApp:
     """WaveCore tkinter主界面。"""
+
+    # [10-21] 波形识别去抖：连续这么多帧一致才更新界面
+    TY_STREAK_TO_SHOW = 3
 
     PRESETS = (
         ("100 kHz", 0, 100_000),
@@ -295,6 +306,9 @@ class WaveCoreApp:
         self.latest_duty_percent = None
         self.latest_pulse_width_us = None
         self.latest_waveform_type = None
+        # [10-21] TY 去抖状态：连续多少帧一致才显示
+        self._ty_pending = None
+        self._ty_streak = 0
         self.latest_self_fft_peaks = {"SF": None, "S2": None, "S3": None}
         self.latest_window_used = None
         self.latest_frequency_hz = None
@@ -476,7 +490,7 @@ class WaveCoreApp:
         _measurement_card(measurements, 3, "FFT第二峰 A", self.peak_a_var)
         _measurement_card(measurements, 0, "占空比 D", self.duty_var, row=1)
         _measurement_card(measurements, 1, "脉宽 W", self.pulse_width_var, row=1)
-        _measurement_card(measurements, 2, "识别结果", self.detected_waveform_var, row=1)
+        _measurement_card(measurements, 2, "识别结果", self.detected_waveform_var, row=1, width=24)
         _measurement_card(measurements, 3, "自研FFT SF/S2/S3", self.self_fft_var, row=1)
 
         controls = ttk.LabelFrame(self.root, text="信号与采集控制", padding=(8, 4))
@@ -1866,8 +1880,8 @@ class WaveCoreApp:
         if f is None:
             return base
         if f > 25000:
-            return f"{base}（{f}Hz 超 25kHz，混叠区不可信）"
-        return f"{base}（频率波动过大，等稳定）"
+            return f"{base}（超 25kHz）"
+        return f"{base}（等稳定）"
 
     def _handle_event(self, event):
         event_type = event.get("type")
@@ -1954,9 +1968,36 @@ class WaveCoreApp:
             waveform_names = {0: "方波", 1: "正弦", 2: "三角", 3: "其他"}
             waveform_type = event["waveform_type"]
             self.latest_waveform_type = waveform_type
-            self.detected_waveform_var.set(
-                self._describe_waveform_type(waveform_type, waveform_names)
-            )
+
+            # [10-21] 显示策略（解决 25kHz 以上来回跳 + 卡片被撑开）
+            #
+            # 根因：板上每帧独立判决。25kHz 以上形状特征处在边界，
+            #       TY 会在 1/0/2 与 3 之间逐帧跳，界面看着像在抽搐；
+            #       而"3：其他（超 25kHz）"比"1：正弦"长一截，卡片跟着伸缩。
+            #
+            # 做法分两段：
+            #   ① 频率 > 25kHz —— **主机自己定性为"其他"**，不用板子的 TY。
+            #      主机在同一帧就拿到了频率，判据是确定的，天然不跳。
+            #      （只靠去抖不行：50/50 抖动时会一直卡在旧值，反而误导弹。）
+            #   ② 频率 ≤ 25kHz —— 识别区可信，直接用板子的 TY；
+            #      再加 3 帧一致的去抖，压掉边界上的零星毛刺。
+            freq = self.latest_frequency_hz
+            if freq is not None and freq > 25000:
+                self._ty_pending = 3
+                self._ty_streak = self.TY_STREAK_TO_SHOW
+                self.detected_waveform_var.set("3：其他（超 25kHz）")
+                return
+
+            if waveform_type == self._ty_pending:
+                self._ty_streak += 1
+            else:
+                self._ty_pending = waveform_type
+                self._ty_streak = 1
+
+            if self._ty_streak >= self.TY_STREAK_TO_SHOW:
+                self.detected_waveform_var.set(
+                    self._describe_waveform_type(waveform_type, waveform_names)
+                )
 
         elif event_type == "window_used":
             # [10-18] 每跑一次自研 FFT, 硬件在 SF/S2/S3 之后补一条 WIN= 行
@@ -2077,14 +2118,28 @@ class WaveCoreApp:
 
         self.axis.clear()
         self.axis.plot(time_ms, display_samples, linewidth=1.0, color="#1769aa")
+
+        # [10-21] 两处修正：
+        #  ① 触发标记原来固定画在 t=0，但预触发 50% 时触发点其实在帧中央 ——
+        #     标记位置是错的。按 PRETRIGGER_RATIO 换算到真实位置。
+        #  ② 原来的 set_title（触发信息）紧接着被下面那句 set_title 覆盖，
+        #     **从来没显示过**。现在合成一个标题。
+        subtitle = (
+            f"{len(samples)}点 · {sample_rate_hz / 1000:g} kHz采样"
+            + (" · 5点中值滤波" if self.median_filter_var.get() else " · 原始波形")
+        )
+
         if self.applied_trigger_name != "自由":
-            self.axis.axvline(0, color="#d32f2f", linestyle="--", linewidth=1.1)
-            trigger_name = {
-                "上升沿": "上升沿",
-                "下降沿": "下降沿",
-            }.get(self.applied_trigger_name, self.applied_trigger_name)
+            ratio = self.PRETRIGGER_RATIO[self.current_pretrigger_index]
+            trig_x_ms = ratio * max(len(samples) - 1, 1) * 1000.0 / sample_rate_hz
+            self.axis.axvline(
+                trig_x_ms, color="#d32f2f", linestyle="--", linewidth=1.1,
+                label=f"触发点 {trig_x_ms:.2f} ms",
+            )
+            pct_text = "%d%%" % int(round(ratio * 100))
             self.axis.set_title(
-                f"触发：{trigger_name}，t=0",
+                f"{subtitle} · 触发：{self.applied_trigger_name} @ "
+                f"{trig_x_ms:.2f} ms（预触发 {pct_text}）",
                 loc="left",
                 color="#d32f2f",
                 fontsize=9,
@@ -2096,14 +2151,13 @@ class WaveCoreApp:
                     "pad": 2,
                 },
             )
+        else:
+            self.axis.set_title(subtitle, loc="left", fontsize=9, pad=2)
+
         self.axis.set_xlabel("时间（ms）")
         self.axis.set_ylabel("ADC码值（LSB）")
         self.axis.set_ylim(0, 255)
         self.axis.grid(alpha=0.3)
-        self.axis.set_title(
-            f"{len(samples)}点 · {sample_rate_hz / 1000:g} kHz采样"
-            + (" · 5点中值滤波" if self.median_filter_var.get() else " · 原始波形")
-        )
         self.canvas.draw_idle()
 
     def _draw_spectrum(self, magnitude_codes, count_frame=True):
