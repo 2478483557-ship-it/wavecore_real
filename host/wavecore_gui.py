@@ -1869,6 +1869,58 @@ class WaveCoreApp:
             self.stop_csv_logging()
             messagebox.showerror("CSV写入失败", str(error))
 
+    # ---- 自研 FFT 三峰的读数可信度提示 ----
+    #
+    # [10-22] 为什么需要这一段：
+    #   第三峰通常是方波的五次谐波。基频超过约 5000Hz 时 5f 越过 24.95kHz，
+    #   而在 50kHz 采样下它会**混叠折叠**成 50000-5f：
+    #       5050Hz -> 5f=25250 -> 读回 24751
+    #       5200Hz -> 5f=26000 -> 读回 24002
+    #   这些数字看着完全正常，用户会当真值用。
+    #
+    # ★ 这件事 RTL 发现不了：混叠发生在 ADC 采样那一刻，频谱里那个位置
+    #   本来就真有能量，FFT 只是如实报告。能识别它的只有「峰值之间的谐波关系」，
+    #   而三个峰只有在主机侧才同时到手。
+    #
+    #   判据（两条都满足才报）：
+    #     1) S2 能被 SF 的 3 倍解释（方波的三次谐波特征）
+    #     2) S3 明显偏离 5*SF，且落在 50000-5*SF 附近
+    #   只满足 1) 不报 —— 双音等非谐波信号不该被误判。
+    SELF_FFT_NYQ_HZ = 24951          # bin 511 对应频率，显示范围上限
+    ADC_FS_HZ = 50000                # T1 采样率
+
+    def _self_fft_note(self, values):
+        """返回追加在三峰读数后面的短提示；读数可信时返回空串。
+
+        判据只有一条真正可靠：**五次谐波是否越过 24951Hz**。
+
+          5f <= 24951  ->  读数可信（哪怕频率很高，比如 4.95kHz 基频的 24750）
+          5f >  24951  ->  已经折叠，读数不可信
+
+        折叠后的频率约等于 fs - 5f：
+            5050Hz -> 5f=25250 -> 读回 24751
+            5200Hz -> 5f=26000 -> 读回 24002
+        这些数字单看完全正常，所以必须显式提示。
+
+        前提是先确认 S2 确实是三次谐波（双音等非谐波信号不该被误判）。
+        """
+        sf, s2, s3 = values
+        if not sf or not s2 or not s3:
+            return ""
+
+        # S2 不是 3*SF（5% 容差内）就说明这不是谐波串，不做任何判断
+        if abs(s2 - 3 * sf) > 0.05 * 3 * sf:
+            return ""
+
+        expect5 = 5 * sf
+        if expect5 > self.SELF_FFT_NYQ_HZ:
+            return "  <- 第三峰折叠, 5f=%d 已超 24951" % expect5
+
+        # 5f 在范围内但读数对不上，说明第三峰不是五次谐波
+        if abs(s3 - expect5) > 0.05 * expect5:
+            return "  <- 第三峰非五次谐波"
+        return ""
+
     def _process_events(self):
         while True:
             try:
@@ -2041,6 +2093,7 @@ class WaveCoreApp:
             self.self_fft_var.set(
                 " / ".join("--" if value is None else str(value) for value in values)
                 + " Hz"
+                + self._self_fft_note(values)
             )
 
         elif event_type == "waveform":
