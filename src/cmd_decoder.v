@@ -66,6 +66,7 @@ module cmd_decoder (
     output reg         play_set,   // [0x93] 回放档位生效(1拍脉冲)  [10-16]
     output reg         play_sel,   // [0x93] IFFT 结果回放: 0=关 1=DAC 回放
     output reg         dbg_read,   // [0x94] 状态回读触发(1拍脉冲)  [10-17]
+    output reg         dbg_wd,     // [0x9D] 波形识别内部量回读(1拍脉冲) [10-23]
     output reg         dbg_nn,     // [0x95] 神经网络结果回读(1拍脉冲)  [10-17]
     output reg         ty_src_sel, // [0x96] 识别来源: 0=TY规则法(默认) 1=神经网络
     output reg         win_auto,   // [0x97] 自适应选窗: 0=手动(默认) 1=自动
@@ -133,6 +134,7 @@ module cmd_decoder (
             play_sel    <= 1'b0;      // [10-16] 回放默认关, DDS 独占 DAC
             dbg_read    <= 1'b0;
             dbg_nn      <= 1'b0;
+            dbg_wd      <= 1'b0;
             ty_src_sel  <= 1'b0;
             win_auto    <= 1'b0;
             avg_en      <= 1'b0;
@@ -177,6 +179,7 @@ module cmd_decoder (
             //   串口一直刷 SF/S2/S3 行（与 10-17 修 dbg_read 前的现象一模一样）。
             //   实测：修复前发一次 0x95，之后 3 秒内全是 SF 行。
             dbg_nn      <= 1'b0;
+            dbg_wd      <= 1'b0;   // [10-23] 0x9D 同理: 不每拍清零就会无限重触发
             if (rx_done) begin
                 case (st)
                     ST_H1: begin
@@ -270,6 +273,9 @@ module cmd_decoder (
                                 end
                                 8'h97: begin             // [10-18] 自适应选窗
                                     win_auto <= pbuf[0][0];
+                                end
+                                8'h9D: begin             // [10-23] 波形识别内部量回读
+                                    dbg_wd <= 1'b1;
                                 end
                                 8'h99: begin             // [10-23] 噪声注入: [1]=衰减, [0]=噪声档
                                     lk_noise <= pbuf[0][3:0];

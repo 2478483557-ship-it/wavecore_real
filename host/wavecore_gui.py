@@ -2325,13 +2325,20 @@ class WaveCoreApp:
                 self._spec_fps = (0.7 * self._spec_fps + 0.3 * inst
                                   if self._spec_fps else inst)
             self._spec_last_t = now
-            self.spectrum_info_var.set(
+            line = (
                 f"第{self.spectrum_frame_count}帧｜"
                 f"峰值 {peak_hz:.1f} Hz｜"
                 f"底噪 {floor:.1f}｜"
                 f"{self._spec_fps:.1f} 帧/s｜"
-                f"T{self.current_timebase_index + 1} fs={fs_hz / 1000:g} kHz"
+                f"T{self.current_timebase_index + 1} fs={self._fmt_hz(fs_hz)}"
             )
+            # [10-23] 谐波越界提示。
+            #   用户反馈"频率开高了就没有次峰"——其实是本档 Nyquist 装不下谐波，
+            #   2 次/3 次谐波已经折叠回低频。界面直接告诉他该切档，别让人以为坏了。
+            nyq_hz = fs_hz / 2.0
+            if self.current_timebase_index <= 1 and peak_hz > nyq_hz * 0.4:
+                line += f"　⚠ {peak_hz:.0f}Hz 已接近本档上限 {self._fmt_hz(nyq_hz)}，谐波会折叠——切 T3/T4 才能看到次峰"
+            self.spectrum_info_var.set(line)
 
         self.spectrum_canvas.draw_idle()
 

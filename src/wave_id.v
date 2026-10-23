@@ -12,7 +12,12 @@ module wave_id (
     input  wire       rst_n,
     input  wire [7:0] ad_cap,
     input  wire [9:0] decim_cfg,   // [10-21] 自适应抽取比 1..1023，由 board_top 按实测频率给出
-    output reg  [1:0] wave_type
+    output reg  [1:0] wave_type,
+    // [10-23] 调试回读用(0x9D): 把判定依据的中间量送出去
+    //   dbg_span = 窗口内 max-min（等于 1 倍峰峰值）
+    //   dbg_hi   = |x-mid| > 3/8*span 的样点计数（判定就看它）
+    output wire [7:0]  dbg_span,
+    output wire [11:0] dbg_hi
 );
     // ---- [10-21] 自适应降采样节拍 ----
     // 原来固定 1000（fs=50kHz），导致每周期样点数 spp = 50000/F 随频率下降：
@@ -33,6 +38,10 @@ module wave_id (
     reg  [1:0]  ph;              // 0=测幅 1=计数
     reg  [10:0] cnt;             // 0..2047 (降采样点计数)
     reg  [7:0]  mn, mx, mid, span;
+    // [10-23] 回读要用"和判定同一时刻"的值: span/hi_cnt 是实时量,
+    //   而 wave_type 是窗口结束才锁存的, 直接读会混两个窗口的数据。
+    reg  [7:0]  span_r;
+    reg  [11:0] hi_r;
     reg  [11:0] hi_cnt;
     wire [7:0]  th3 = (span >> 2) + (span >> 3);     // 3/8*span
     wire [8:0]  abs_d = (med > mid) ? (med - mid) : (mid - med);
@@ -63,6 +72,8 @@ module wave_id (
                         hi_cnt <= 12'd0;
                     end
                     else begin
+                        span_r <= span;             // [10-23] 与判定同步锁存
+                        hi_r   <= hi_cnt;
                         if (span < 8'd16)                       wave_type <= 2'd3;
                         else if (hi_cnt > 12'd1720)             wave_type <= 2'd0;
                         else if (hi_cnt >= 12'd819 &&
@@ -86,4 +97,8 @@ module wave_id (
             end
         end
     end
+    // [10-23] 调试回读: 直接引出内部统计量
+    assign dbg_span = span_r;
+    assign dbg_hi   = hi_r;
+
 endmodule

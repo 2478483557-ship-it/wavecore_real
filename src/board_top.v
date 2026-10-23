@@ -240,19 +240,26 @@ wire [23:0] nn_rd2 = {8'd0, nf_f0};
 wire [23:0] nn_rd3 = {8'd0, nf_f2};
 
 // 数据源选择: 0x95 的脉冲来得早, 用打一拍后的 dbg_req 触发, 此时 dbg_is_nn 已更新
+// [10-23] 回读源改成三选一: 0=0x94 反向变换状态 1=0x95 神经网络 2=0x9D 波形识别
+//   0x9D: SF = 800000 + 类型(0..3)   S2 = span   S3 = hi_cnt
+wire [23:0] wd_rd1 = 24'd800000 + {22'd0, wave_type_w};
+wire [23:0] wd_rd2 = {16'd0, wid_span_w};
+wire [23:0] wd_rd3 = {12'd0, wid_hi_w};
+reg  [1:0]  dbg_src;
 always @(posedge sys_clk or negedge sys_rst_n) begin
-    if (!sys_rst_n)       dbg_is_nn <= 1'b0;
-    else if (dbg_nn_w)    dbg_is_nn <= 1'b1;
-    else if (dbg_read_w)  dbg_is_nn <= 1'b0;
+    if (!sys_rst_n)       dbg_src <= 2'd0;
+    else if (dbg_nn_w)    dbg_src <= 2'd1;
+    else if (dbg_wd_w)    dbg_src <= 2'd2;
+    else if (dbg_read_w)  dbg_src <= 2'd0;
 end
 always @(posedge sys_clk or negedge sys_rst_n) begin
     if (!sys_rst_n) dbg_req_d <= 1'b0;
-    else            dbg_req_d <= dbg_read_w | dbg_nn_w;
+    else            dbg_req_d <= dbg_read_w | dbg_nn_w | dbg_wd_w;
 end
 
-wire [23:0] dbg_v1 = dbg_is_nn ? nn_rd1 : dbg_rd1_w;
-wire [23:0] dbg_v2 = dbg_is_nn ? nn_rd2 : dbg_rd2_w;
-wire [23:0] dbg_v3 = dbg_is_nn ? nn_rd3 : dbg_rd3_w;
+wire [23:0] dbg_v1 = (dbg_src == 2'd1) ? nn_rd1 : (dbg_src == 2'd2) ? wd_rd1 : dbg_rd1_w;
+wire [23:0] dbg_v2 = (dbg_src == 2'd1) ? nn_rd2 : (dbg_src == 2'd2) ? wd_rd2 : dbg_rd2_w;
+wire [23:0] dbg_v3 = (dbg_src == 2'd1) ? nn_rd3 : (dbg_src == 2'd2) ? wd_rd3 : dbg_rd3_w;
 // [10-17] 识别来源切换: 0=TY 规则法(默认, 与升级前一致) 1=神经网络
 wire        ty_src_sel_w;
 wire        win_auto_w;      // [0x97] 自适应选窗
@@ -278,6 +285,10 @@ wire [7:0]  sine_mix;        // DDS 波形叠加噪声后的结果
 wire signed [47:0] lk_i_w, lk_q_w;
 wire [31:0] lk_n_w;
 wire        lk_done_w, lk_act_w, lk_txd_w;
+// [10-23] 0x9D 波形识别内部量回读
+wire        dbg_wd_w;
+wire [7:0]  wid_span_w;
+wire [11:0] wid_hi_w;
     wire        spec_run_w;    // spec_frame -> self_fft 运行脉冲
     wire [7:0]  spec_wdata_w;  // 谱缓存写数据
     wire [8:0]  spec_waddr_w;  // 谱缓存写地址
@@ -329,7 +340,8 @@ wire        lk_done_w, lk_act_w, lk_txd_w;
         .lk_att      (lk_att_w    ),   // [0x99] 信号衰减
         .lk_en       (lk_en_w     ),   // [0x9A] 锁相放大使能
         .lk_req      (lk_req_w    ),   // [0x9B] 请求 I/Q 帧
-        .lk_per      (lk_per_w    )    // [0x9C] 积分周期数
+        .lk_per      (lk_per_w    ),   // [0x9C] 积分周期数
+        .dbg_wd      (dbg_wd_w     )   // [0x9D] 波形识别内部量回读
         // .cal_load 悬空: 标定值本身是带记忆的寄存器, 脉冲只是预留回执/指示用
     );
 
@@ -582,7 +594,9 @@ wire        lk_done_w, lk_act_w, lk_txd_w;
         .rst_n    (sys_rst_n  ),
         .ad_cap   (ad_cap     ),
         .decim_cfg(wid_decim  ),              // [10-21] 自适应抽取比
-        .wave_type(wave_type_w)               // 规则法原始结果(0=方波 1=正弦 2=三角 3=其他)
+        .wave_type(wave_type_w),              // 规则法原始结果(0=方波 1=正弦 2=三角 3=其他)
+        .dbg_span (wid_span_w ),              // [0x9D] 调试回读
+        .dbg_hi   (wid_hi_w   )
     );
 
     // ---- 3.12 自研FFT(F4 复活版, 2026-09-17): 1024点 DIF, 0x8A 按需, SF= 行 ----

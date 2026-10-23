@@ -70,7 +70,15 @@ module measure_report (
     reg [23:0] prev_f;
     wire [23:0] f_diff = (freq_hz > prev_f) ? (freq_hz - prev_f) : (prev_f - freq_hz);
     wire f_stable = (prev_f == 24'd0) || (f_diff <= (prev_f >> 6) + 24'd16);
-    wire ty_ok = (freq_hz <= 24'd25000) && f_stable;
+    // [10-23] 闸门原来是写死的 25kHz，超过就一律报"其他"。
+    //   那是早先 wave_id 用固定抽取比时的限制（fs=50kHz 下 25kHz 就到顶了）。
+    //   10-21 起 wave_id 改成按频率自适应抽取比，分类器实际能到 200kHz 以上。
+    //   实测（0x9D 回读内部类型）：
+    //     正弦 50k/100k/200k 全对，300k 开始出错
+    //     方波 50k/100k/200k/300k/500k 全对
+    //     三角 只在 25kHz 附近可靠（更高频段波形被模拟通道平滑，判据不再成立）
+    //   故把闸门抬到 200kHz —— 这是"三类都还有意义"的上界，再高正弦会误判成三角。
+    wire ty_ok = (freq_hz <= 24'd200000) && f_stable;
     wire [1:0] ty_now = ty_ok ? wave_type : 2'd3;
 
     //================ Vpp: LSB -> mV ================
