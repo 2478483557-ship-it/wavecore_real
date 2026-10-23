@@ -145,19 +145,19 @@ wire [7:0]  da_play_w;   // [0x93] 回放样点 -> da_send
 wire [23:0] dbg_rd1_w, dbg_rd2_w, dbg_rd3_w;
 
 // ---- [10-17] 特征提取 + 神经网络推理（连续运行）----
-// [10-19 修复] 这几个 wire 原**声明在 200 行之后**，而例化在本行之下 ——
+// [10-19 修复] 这几个 wire 原**声明在 200 行之后**，而例化在本行之下 --
 //   Verilog-2001 会把未声明的标识符**隐式声明成 1 位**。Vivado 综合恰好
 //   取了后面的显式声明，所以实测正确；但换综合器可能真按 1 位处理：
 //   nn_cls 是 2 位、被截成 1 位就只剩两类，nf_f0 是 16 位、被截位宽则特征全丢。
-//   声明必须在首次使用之前 —— 这条 xvlog 会直接报 ERROR。
+//   声明必须在首次使用之前 -- 这条 xvlog 会直接报 ERROR。
 wire [15:0] nf_f0, nf_f1, nf_f2, nf_f3, nf_f4, nf_f5;
 wire        nf_done, nn_done;
 wire [1:0]  nn_cls;
 reg  [31:0] nf_dcnt;       // 独立的抽取计数(与 self_fft 的采集互不干扰)
 // ---- [10-21] 波形识别的自适应抽取比 ----
-// 目的：让每周期样点数 spp = (50MHz/decim)/F 始终 ≥ 32。
+// 目的：让每周期样点数 spp = (50MHz/decim)/F 始终 >= 32。
 // 依据：数值扫描表明 spp=8 时正弦与三角的判据区间完全重合（0.25~0.50），
-//       spp≥32 才干净分离。实测原地固定 decim=1000（fs=50kHz），
+//       spp>=32 才干净分离。实测原地固定 decim=1000（fs=50kHz），
 //       正弦/三角在 5kHz 就崩，三档全对最高只到 3kHz。
 //
 // 取值原则：decim ≈ 390625/F，即 spp ≈ 128、窗口内恒定 16 个周期。
@@ -174,17 +174,17 @@ always @(*) begin
     else if (meas_freq < 24'd12207)  wid_decim = 10'd64;
     else if (meas_freq < 24'd24414)  wid_decim = 10'd32;
     // [10-21 实测] 抽取比不能低于 32。
-    //   上板对比：decim=32（fs=1.56MHz）→ 24kHz 稳定 5/5；
-    //             decim=16（fs=3.13MHz）→ 26kHz 全错 0/5，而 spp 反而更高（120）。
+    //   上板对比：decim=32（fs=1.56MHz）-> 24kHz 稳定 5/5；
+    //             decim=16（fs=3.13MHz）-> 26kHz 全错 0/5，而 spp 反而更高（120）。
     //   说明限制来自**采样率**而非样点数：DDS 输出是 50MHz 台阶波形，
     //   采得越快，台阶/毛刺占比越大，形状统计被破坏。
-    //   故 fs 上限锁在 1.5625MHz → spp≥32 的最高频率约 48.8kHz。
+    //   故 fs 上限锁在 1.5625MHz -> spp>=32 的最高频率约 48.8kHz。
     //   （若用外部信号源而非板上回环，这个上限可能更高，待验。）
     else                             wid_decim = 10'd32;
 end
 
 // [10-21] 神经网络的特征提取也改走自适应抽取。
-//   原来固定 tb_decim_w（T1=1000 → 50kHz），每周期样点随频率掉，
+//   原来固定 tb_decim_w（T1=1000 -> 50kHz），每周期样点随频率掉，
 //   实测网络在 20kHz 以上全错。
 //   注意 not 用 tb_decim_w：那是时基，与波形识别无关。
 wire        nf_tick = (nf_dcnt >= ({22'd0, wid_decim} - 32'd1));
@@ -219,7 +219,7 @@ wave_nn #(.SH1(14), .SH2(11)) u_nn (
 
 // [10-19 修复] 这 5 个信号原来声明在下面 20 多行之后，但这里就要用。
 //   Verilog-2001 会把未声明标识符隐式声明成 1 位 wire；nn_cls_r 本来是 2 位，
-//   一旦被按 1 位处理，神经网络的 4 个类别就退化成 2 个 —— 而这种错误
+//   一旦被按 1 位处理，神经网络的 4 个类别就退化成 2 个 -- 而这种错误
 //   在 Vivado 里只报 warning，不会拦住综合。声明必须在使用之前。
 reg  [1:0]  nn_cls_r;      // 锁存最近一次的识别结果
 wire        dbg_read_w;    // 0x94 触发脉冲
@@ -268,6 +268,16 @@ assign ty_show = ty_src_sel_w ? nn_as_ty : wave_type_w;
 
     // ---- 0.7c [0x8E] 幅度谱帧相关线(同样必须先声明后使用; 下方 3.7/3.9 会用到) ----
     wire        spec_req_w;    // 0x8E 请求脉冲(cmd_decoder 输出)
+// [10-23] 锁相放大 / 噪声注入
+wire        lk_noise_w;      // [0x99] 噪声档位
+wire [2:0]  lk_att_w;        // [0x99] 信号衰减
+wire        lk_en_w;         // [0x9A]
+wire        lk_req_w;        // [0x9B]
+wire [15:0] lk_per_w;        // [0x9C]
+wire [7:0]  sine_mix;        // DDS 波形叠加噪声后的结果
+wire signed [47:0] lk_i_w, lk_q_w;
+wire [31:0] lk_n_w;
+wire        lk_done_w, lk_act_w, lk_txd_w;
     wire        spec_run_w;    // spec_frame -> self_fft 运行脉冲
     wire [7:0]  spec_wdata_w;  // 谱缓存写数据
     wire [8:0]  spec_waddr_w;  // 谱缓存写地址
@@ -314,7 +324,12 @@ assign ty_show = ty_src_sel_w ? nn_as_ty : wave_type_w;
         .sf_run      (sf_run_w    ),
         .sweep_en    (sweep_en_w  ),
         .cal_kn      (cal_kn_w    ),
-        .spec_req    (spec_req_w  )
+        .spec_req    (spec_req_w  ),
+        .lk_noise    (lk_noise_w  ),   // [0x99] 噪声档位
+        .lk_att      (lk_att_w    ),   // [0x99] 信号衰减
+        .lk_en       (lk_en_w     ),   // [0x9A] 锁相放大使能
+        .lk_req      (lk_req_w    ),   // [0x9B] 请求 I/Q 帧
+        .lk_per      (lk_per_w    )    // [0x9C] 积分周期数
         // .cal_load 悬空: 标定值本身是带记忆的寄存器, 脉冲只是预留回执/指示用
     );
 
@@ -383,10 +398,21 @@ assign ty_show = ty_src_sel_w ? nn_as_ty : wave_type_w;
     assign sine_out = dual_on ? {1'b0, wave_a[7:1]} + {1'b0, wave_b[7:1]} : wave_a;
 
     // ---- 3. DAC 接口(时序对齐后送出) ----
+    // [10-23] 锁相演示用：给 DDS 波形叠加伪随机噪声、并可衰减信号本身。
+    //   noise=0 / att=0 时输出与原来逐位相同（增益通路是纯组合的加减与移位）。
+    sig_noise u_sn (
+        .clk  (sys_clk    ),
+        .rst_n(sys_rst_n  ),
+        .din  (sine_out   ),
+        .level(lk_noise_w ),
+        .shift(lk_att_w   ),
+        .dout (sine_mix   )
+    );
+
     da_send u_da (
         .clk     (sys_clk  ),
                 // [10-16] 回放使能时用 IFFT 结果驱动 DAC, 否则仍由 DDS 驱动(DDS 功能不受影响)
-        .sine_in (play_en_w ? da_play_w : sine_out ),
+        .sine_in (play_en_w ? da_play_w : sine_mix ),
         .da_clk  (da_clk   ),
         .da_data (da_data  )
     );
@@ -400,9 +426,37 @@ assign ty_show = ty_src_sel_w ? nn_as_ty : wave_type_w;
         .ad_cap    (ad_cap   )
     );
 
+    // ---- 3.55 数字锁相放大 [10-23] ----
+    //   与 DDS 共用同一个频率字，构成"同源参考"的相干解调。
+    //   关闭时累加器清零，不占用 TX、不影响任何既有功能。
+    lockin_core u_lk (
+        .clk   (sys_clk   ),
+        .rst_n (sys_rst_n ),
+        .ad_cap(ad_cap    ),
+        .fcw   (fcw       ),
+        .en    (lk_en_w   ),
+        .m_per (lk_per_w  ),
+        .i_out (lk_i_w    ),
+        .q_out (lk_q_w    ),
+        .n_out (lk_n_w    ),
+        .done  (lk_done_w )
+    );
+
+    lockin_frame u_lkf (
+        .clk      (sys_clk ),
+        .rst_n    (sys_rst_n),
+        .req      (lk_req_w),
+        .lk_busy  (spec_act_w | wav_act | fft_act | sf_act_w),
+        .i_val    (lk_i_w  ),
+        .q_val    (lk_q_w  ),
+        .n_val    (lk_n_w  ),
+        .uart_txd (lk_txd_w),
+        .lk_active(lk_act_w)
+    );
+
     // ---- 3.55 调试观察信号(专供 ILA) ----
     // ★ 这 4 根 wire 要接到下面 3.6 / 3.7 段模块的 .dbg_* 端口上, 所以**必须在这里声明**。
-    //   千万不要挪到文件后部的 ILA 段去 —— 位置在使用之后 = Verilog 先建"隐式 1 位线网",
+    //   千万不要挪到文件后部的 ILA 段去 -- 位置在使用之后 = Verilog 先建"隐式 1 位线网",
     //   后面再写显式声明就是重复声明, 而且 3 位端口接到 1 位线网上高位会悬空
     //   (xvlog 会报 `VRFC 10-2938 'x' is already implicitly declared`)。
     wire [2:0]  meter_dbg_st;     // freq_meter 内部 FSM 状态
@@ -605,8 +659,8 @@ assign ty_show = ty_src_sel_w ? nn_as_ty : wave_type_w;
     );
 
     // TX 引脚 5 路互斥: 谱帧 > 波形 > 谱峰 > 自研FFT > 测量
-    assign uart_txd = spec_act_w ? spec_txd : (wav_act ? wav_txd : (fft_act ? fft_txd :
-                      (sf_act_w ? sf_txd : m_txd)));
+    assign uart_txd = lk_act_w ? lk_txd_w : (spec_act_w ? spec_txd : (wav_act ? wav_txd : (fft_act ? fft_txd :
+                      (sf_act_w ? sf_txd : m_txd))));
 
     // ---- 3.11 F1 转发口: 把整条串口数据流镜像给 STM32 ----
     uart_mirror u_mirror (
@@ -623,7 +677,7 @@ assign ty_show = ty_src_sel_w ? nn_as_ty : wave_type_w;
     //
     // ★ 一键开关: ILA_EN=1 才有 ILA；交付版保持 0。
     //   注意 1'b0 时整块 ILA **连同它的调试桥(dbg_hub)一起被 generate 掉**, 资源占用回到
-    //   与"无 ILA 版"完全一致 —— 也就是说这个开关是零代价的。
+    //   与"无 ILA 版"完全一致 -- 也就是说这个开关是零代价的。
     //   最终提交版若要把资源压到极致, 改成 1'b0 即可(功能一行都不受影响)。
     //
     // 探针口径(与 ILA IP 里配的 3 个 probe 均为 8 位对齐):
