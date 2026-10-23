@@ -2115,8 +2115,11 @@ class WaveCoreApp:
             )
 
         elif event_type == "waveform":
+            # [10-23] 波形帧固定 50kHz。解析器是按当前档位 fs 填的 sample_rate_hz，
+            #   高频档(T3/T4)下会把它当成 12.5MHz，时间轴直接差 250 倍。
+            #   这里强制覆盖，不能信解析器传来的值。
             self.latest_waveform_samples = list(event["samples"])
-            self.latest_waveform_sample_rate_hz = event["sample_rate_hz"]
+            self.latest_waveform_sample_rate_hz = WAVE_SAMPLE_RATE_HZ
             now = time.monotonic()
             self.waveform_frame_times.append(now)
             self.waveform_frame_times = [
@@ -2126,7 +2129,7 @@ class WaveCoreApp:
             ]
             self._draw_waveform(
                 event["samples"],
-                event["sample_rate_hz"],
+                WAVE_SAMPLE_RATE_HZ,
             )
             samples = event["samples"]
             self._update_waveform_info(samples, event["sample_rate_hz"])
