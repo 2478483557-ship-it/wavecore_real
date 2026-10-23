@@ -44,6 +44,11 @@ from protocol import (
 )
 
 
+# [10-23] 波形帧固定 50kHz —— 已与 0x8D 时基解耦（见 src/wave_frame.v）。
+#   高频档(T3/T4)下 0x83 返回的仍是 50kHz 采样，时间轴必须按这个值算。
+WAVE_SAMPLE_RATE_HZ = 50_000
+
+
 BAUD_RATE = 460800
 RECONNECT_INTERVAL_SECONDS = 1.0
 CH340_VID = 0x1A86
@@ -265,12 +270,15 @@ class WaveCoreApp:
         ("1 MHz", 3, 1_000_000),
     )
 
-    # [2026-10-14 收窄] 下拉框只留 T1/T2 —— T3(100k)/T4(200k) 实机切换后无响应，
-    #   根因未定位，先从界面上撤掉入口。FPGA 侧四档仍在。
-    #   恢复办法见 host/protocol.py 里 TIMEBASE_SAMPLE_RATES 上方的注释。
+    # [2026-10-23] 四档重新开放。T3/T4 不再是 100k/200k，而是**高频频谱档**：
+    #   原来那两档在实机上抓不到数据（decim 太小，波形缓存凑不满），
+    #   现已改成 6.25MHz / 12.5MHz，只服务频谱。
+    #   ⚠️ 波形帧固定 50kHz，不随档位变化（否则高速率下会卡死，见 wave_frame.v）。
     TIMEBASE_CHOICES = (
-        ("T1  50 kHz", 0),
-        ("T2  12.5 kHz", 1),
+        ("T1  50 kHz（时域 / 低频）", 0),
+        ("T2  12.5 kHz（细分辨率）", 1),
+        ("T3  6.25 MHz（高频频谱）", 2),
+        ("T4  12.5 MHz（高频频谱）", 3),
     )
 
     # [v1.21 0x8F] 预触发比例：决定触发点在 1024 点波形帧里的位置
@@ -1273,23 +1281,33 @@ class WaveCoreApp:
                 "请选择 %s 时基" % "、".join(label for label, _ in self.TIMEBASE_CHOICES)
             ) from error
 
+    @staticmethod
+    def _fmt_hz(hz):
+        """频率按量级显示：小于 1MHz 用 kHz，否则用 MHz。
+
+        [10-23] 原来一律除 1000 当 kHz 显示，到了 12.5MHz 会写成
+        「12500 kHz」，既不好读也容易看错量级。
+        """
+        if hz >= 1_000_000:
+            return f"{hz / 1_000_000:g} MHz"
+        return f"{hz / 1000:g} kHz"
+
     def _update_timebase_info(self):
-        fs_hz = TIMEBASE_SAMPLE_RATES[self.current_timebase_index]
+        idx = self.current_timebase_index
+        fs_hz = TIMEBASE_SAMPLE_RATES[idx]
         resolution_hz = fs_hz / 1024.0
         span_hz = fs_hz / 2.0
-        self.timebase_info_var.set(
-            f"当前T{self.current_timebase_index + 1}："
-            f"fs={fs_hz / 1000:g} kHz，"
-            f"Δf={resolution_hz:.2f} Hz，"
-            f"频谱范围0～{span_hz / 1000:g} kHz"
+        line = (
+            f"当前T{idx + 1}：fs={self._fmt_hz(fs_hz)}，"
+            f"Δf={resolution_hz:.1f} Hz，"
+            f"频谱范围 0～{self._fmt_hz(span_hz)}"
         )
+        if idx >= 2:
+            line += "　（高频档，仅频谱）"
+        self.timebase_info_var.set(line)
         if hasattr(self, "waveform_frame"):
-            self.waveform_frame.configure(
-                text=(
-                    f"波形（T{self.current_timebase_index + 1}，"
-                    f"{fs_hz / 1000:g} kHz采样）"
-                )
-            )
+            # 波形通路已与时基解耦，固定 50kHz —— 不能再写成"当前档位采样"
+            self.waveform_frame.configure(text="波形（固定 50 kHz 采样）")
 
     def _selected_pretrigger_index(self):
         choices = dict(self.PRETRIGGER_CHOICES)
@@ -1610,8 +1628,13 @@ class WaveCoreApp:
         self._reset_waveform_display()
 
     def _reset_waveform_display(self):
-        """切换时基后清除旧样点，禁止把上一时基的数据按新时间轴重画。"""
-        fs_hz = TIMEBASE_SAMPLE_RATES[self.current_timebase_index]
+        """切换时基后清除旧样点，禁止把上一时基的数据按新时间轴重画。
+
+        [10-23] 时间轴固定按 50kHz 算：波形帧已与 0x8D 时基解耦
+        （高频档下仍按 50kHz 采），再拿档位的 fs 去算会得到错误窗长
+        —— 比如 T4 会算成 0.08ms，实际仍是 20.5ms。
+        """
+        fs_hz = WAVE_SAMPLE_RATE_HZ
         duration_ms = 1024 * 1000.0 / fs_hz
         self.latest_waveform_samples = None
         self.latest_waveform_sample_rate_hz = None
@@ -1620,12 +1643,7 @@ class WaveCoreApp:
             f"已切换T{self.current_timebase_index + 1}，请重新请求1024点波形"
         )
         self.export_wave_button.configure(state="disabled")
-        self.waveform_frame.configure(
-            text=(
-                f"波形（T{self.current_timebase_index + 1}，"
-                f"{fs_hz / 1000:g} kHz采样）"
-            )
-        )
+        self.waveform_frame.configure(text="波形（固定 50 kHz 采样）")
         self.axis.clear()
         self.axis.set_xlabel("时间（ms）")
         self.axis.set_ylabel("ADC码值（LSB）")
@@ -2250,8 +2268,16 @@ class WaveCoreApp:
         codes = list(magnitude_codes)
         fs_hz = TIMEBASE_SAMPLE_RATES[self.current_timebase_index]
         df_hz = fs_hz / 1024.0
-        frequency_khz = [index * df_hz / 1000.0 for index in range(512)]
-        span_khz = fs_hz / 2000.0
+        # [10-23] 横轴单位按量级自动切：低频档用 kHz，高频档(T3/T4)用 MHz。
+        #   原先一律用 kHz，到 T4 会出现「6250 kHz」这种不好读的刻度。
+        if fs_hz >= 1_000_000:
+            unit = 1_000_000.0
+            unit_text = "MHz"
+        else:
+            unit = 1000.0
+            unit_text = "kHz"
+        freq_axis = [index * df_hz / unit for index in range(512)]
+        span = fs_hz / 2.0 / unit
 
         if count_frame:
             self.latest_spectrum_codes = codes
@@ -2260,8 +2286,9 @@ class WaveCoreApp:
             self.spectrum_frame_count += 1
             self.export_spectrum_button.configure(state="normal")
 
-        self.spectrum_line.set_data(frequency_khz, codes)
-        self.spectrum_axis.set_xlim(0, span_khz)
+        self.spectrum_line.set_data(freq_axis, codes)
+        self.spectrum_axis.set_xlim(0, span)
+        self.spectrum_axis.set_xlabel(f"频率（{unit_text}）")
         self.spectrum_axis.set_title(
             f"当前频谱 · T{self.current_timebase_index + 1} · "
             f"Δf={df_hz:.2f} Hz",
@@ -2277,9 +2304,9 @@ class WaveCoreApp:
 
         self.waterfall_image.set_data(self.spectrum_history)
         self.waterfall_image.set_extent(
-            [0, span_khz, 0, len(self.spectrum_history)]
+            [0, span, 0, len(self.spectrum_history)]
         )
-        self.waterfall_axis.set_xlim(0, span_khz)
+        self.waterfall_axis.set_xlim(0, span)
 
         if count_frame:
             # [10-17] 底噪: 取"离主峰 15 个 bin 以外"的谱线均值。
