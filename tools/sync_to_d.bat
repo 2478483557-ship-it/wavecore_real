@@ -33,7 +33,7 @@ if not defined PY (
     exit /b 1
 )
 
-"%PY%" "tools\sync_to_d.py" %MODE%
+"%PY%" "tools\sync_to_d.py" %MODE% --with-host
 set "RC=%ERRORLEVEL%"
 
 echo.

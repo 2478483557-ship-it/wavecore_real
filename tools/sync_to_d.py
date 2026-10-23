@@ -19,6 +19,7 @@
     python tools/sync_to_d.py            # 只比对，不写（默认，安全）
     python tools/sync_to_d.py --write    # 真正同步
     python tools/sync_to_d.py --write --dst "D:/别的位置/src"
+    python tools/sync_to_d.py --write --with-host     # 连 host/*.py 一起同步
 """
 import argparse
 import io
@@ -75,10 +76,58 @@ def to_gbk(text, name):
     return "".join(out), fixed
 
 
+def sync_host(repo_root, proj_root, write):
+    """同步 host/*.py。保持 UTF-8（Python 3 默认按 UTF-8 读，不能转 GBK）。"""
+    hsrc = os.path.join(repo_root, "host")
+    hdst = os.path.join(proj_root, "host")
+    if not (os.path.isdir(hsrc) and os.path.isdir(hdst)):
+        print("host/ 目录不存在，跳过")
+        return True
+
+    same = diff = add = 0
+    changed, failed = [], []
+    for f in sorted(os.listdir(hsrc)):
+        if not f.endswith(".py"):
+            continue
+        a_path = os.path.join(hsrc, f)
+        b_path = os.path.join(hdst, f)
+        a = read_text(a_path)
+
+        if not os.path.exists(b_path):
+            add += 1
+        elif read_text(b_path) == a:
+            same += 1
+            continue
+        else:
+            diff += 1
+
+        if write:
+            with open(b_path, "wb") as fh:
+                fh.write(a.replace("\n", "\r\n").encode("utf-8"))
+            if read_text(b_path) != a:
+                failed.append(f)
+            else:
+                changed.append(f)
+
+    print("host/ 一致 %d 个｜需更新 %d 个｜新增 %d 个" % (same, diff, add))
+    if diff or add:
+        marks = []
+        if changed:
+            marks.append("已更新: " + ", ".join(changed))
+        if failed:
+            marks.append("★ 失败: " + ", ".join(failed))
+        if not write:
+            marks.append("（只比对，未写入）")
+        print("        " + "；".join(marks))
+    return not failed
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true", help="真正写入（默认只比对）")
     ap.add_argument("--dst", default=DEFAULT_DST, help="Vivado src 目录")
+    ap.add_argument("--with-host", action="store_true",
+                    help="同时同步 host/*.py（保持 UTF-8，Python 不需要 GBK）")
     args = ap.parse_args()
 
     src = repo_src_dir()
@@ -143,6 +192,8 @@ def main():
     print("=" * 62)
 
     if not args.write:
+        if args.with_host:
+            sync_host(os.path.dirname(src), os.path.dirname(args.dst), False)
         if differ or added:
             print("当前是【只比对】模式。确认无误后加 --write 执行同步。")
         else:
@@ -151,6 +202,44 @@ def main():
 
     if blocked:
         return 1
+
+    # ---- host/*.py：同样两份，但**保持 UTF-8**（Python 3 默认按 UTF-8 读）----
+    #   D 盘的 host/ 是 10-21 的旧副本，用户双击的 run_gui.bat 很可能在那里，
+    #   结果"改了代码但界面没变"——10-23 就踩过这个。
+    if args.with_host:
+        hsrc = os.path.join(os.path.dirname(src), "host")
+        hdst = os.path.join(os.path.dirname(args.dst), "host")
+        if os.path.isdir(hsrc) and os.path.isdir(hdst):
+            n_same = n_diff = n_add = 0
+            changed = []
+            for f in sorted(os.listdir(hsrc)):
+                if not f.endswith(".py"):
+                    continue
+                a_path = os.path.join(hsrc, f)
+                b_path = os.path.join(hdst, f)
+                a = read_text(a_path)
+                if not os.path.exists(b_path):
+                    n_add += 1
+                elif read_text(b_path) == a:
+                    n_same += 1
+                    continue
+                else:
+                    n_diff += 1
+                if args.write:
+                    with open(b_path, "wb") as fh:
+                        fh.write(a.replace("\n", "\r\n").encode("utf-8"))
+                    back = read_text(b_path)
+                    if back != a:
+                        print("  [失败] host/%s 回读不一致" % f)
+                        return 1
+                    changed.append(f)
+            print("host/ 一致 %d 个，需更新 %d 个，新增 %d 个"
+                  % (n_same, n_diff, n_add))
+            if args.write and changed:
+                print("  已更新: %s" % ", ".join(changed))
+        else:
+            print("host/ 目录不存在，跳过")
+
     print("同步完成。别忘了重新综合（rebuild_bitstream.bat）。")
     return 0
 
