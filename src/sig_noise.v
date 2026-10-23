@@ -44,13 +44,23 @@ module sig_noise (
     wire signed [8:0] sig1 = (shift > 3'd4) ? 9'sd0 : (sig0 >>> shift);
 
     // ---------------- 相加并饱和 ----------------
-    wire signed [9:0] sum = sig1 + {{2{noise2[7]}}, noise2};
+    // [10-23 修复] 拼接 {a,b} 的结果是**无符号**的，直接写
+    //     wire signed [9:0] sum = sig1 + {{2{noise2[7]}}, noise2};
+    //   会让整个加法按无符号算：负的 sig1 被零扩展成一个很大的正数，
+    //   负半周全部撞到上饱和 -> 波形被削掉一半（实测 Vpp 减半、锁相崩掉）。
+    //   必须先把两边都变成有符号再相加。
+    wire signed [9:0]  nz10  = $signed({{2{noise2[7]}}, noise2});
+    wire signed [9:0]  sig10 = $signed(sig1);
+    wire signed [10:0] sum   = sig10 + nz10;
 
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) dout <= 8'd128;
-        else if (sum > 10'sd127)  dout <= 8'd255;                // 上饱和
-        else if (sum < -10'sd128) dout <= 8'd0;                  // 下饱和
-        else                      dout <= sum[7:0] + 8'd128;     // 回中心
+    // [10-23 修复] 这里原来是一个时序寄存器，结果 DAC 侧波形异常
+    //   （实测频率读数翻倍、Vpp 减半、波形识别判成"其他"）。
+    //   da_send 是纯组合直连 DAC 的，插一级寄存器会改变它与 da_clk 的
+    //   建立关系，所以改成纯组合：既不引入延迟，关掉时也与原来逐位一致。
+    always @(*) begin
+        if (sum > 11'sd127)  dout = 8'd255;                // 上饱和
+        else if (sum < -11'sd128) dout = 8'd0;             // 下饱和
+        else                      dout = sum[7:0] + 8'd128; // 回中心
     end
 
 endmodule

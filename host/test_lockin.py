@@ -145,6 +145,9 @@ def main():
             periods = int(sys.argv[i + 1])
 
     lk = Link(port)
+    # 先把上一轮可能残留的注噪/锁相清掉，否则回归那一段会被污染
+    lk.send(cmd_noise(0, 0), 0.3)
+    lk.send(cmd_lockin_on(False), 0.25)
     lk.send(cmd_freq(freq), 0.4)
     lk.send(cmd_wave(0), 0.3)
     lk.send(cmd_lockin_periods(periods), 0.3)
@@ -182,32 +185,44 @@ def main():
     print("    锁相幅度 = %.2f LSB  ->  %.0f mV(峰峰)   波动 %.2f%%"
           % (b, amp_to_vpp_mv(b), statistics.pstdev(base) / b * 100 if b else 0))
 
-    # ---- 3. 逐档加噪：直接测量 vs 锁相 ----
-    print("\n[3] 加噪对比（直接测量看 V，锁相看幅度）")
-    print("    噪声档  直接V(mV)   V波动    锁相mV     锁相误差   说明")
-    print("    " + "-" * 66)
-    for lvl in (0, 2, 3, 4, 5, 6, 8):
-        lk.send(cmd_noise(lvl, 0), 0.35)
-        time.sleep(0.15)
-
-        vs, amps = [], []
-        for _ in range(6):
-            mm = lk.read_measure(0.45)
-            if mm["V"] is not None:
-                vs.append(mm["V"])
+    # ---- 3. 衰减 + 加噪：把信号埋进噪声，两组读数并排 ----
+    #   注意：误差的参照是"同衰减、无噪声"时的锁相值，不是满幅基准。
+    #   否则衰减本身就会被算成误差，看起来像锁相坏了。
+    print("\n[3] 埋进噪声之后（真值 = 同衰减、无噪声时的锁相值）")
+    print("    衰减 噪声  真值mV   直接V    直接误差   锁相mV   锁相误差")
+    print("    " + "-" * 62)
+    for att in (2, 3):
+        lk.send(cmd_noise(0, att), 0.5)
+        time.sleep(0.2)
+        base_amp = []
+        for _ in range(7):
             v = lk.read_lockin()
             if v:
-                amps.append(lockin_amp_lsb(*v))
-        if not vs or not amps:
-            print("    %-7d --" % lvl)
+                base_amp.append(lockin_amp_lsb(*v))
+        if not base_amp:
             continue
-        vmean = statistics.mean(vs)
-        vstd = statistics.pstdev(vs) / vmean * 100 if vmean else 0
-        amean = statistics.mean(amps)
-        err = (amean - b) / b * 100 if b else 0
-        note = "稳定" if abs(err) < 1 else ("偏差大" if abs(err) < 5 else "★ 发散")
-        print("    %-7d %-11.0f %-9.1f%% %-11.0f %-10.1f%% %s"
-              % (lvl, vmean, vstd, amp_to_vpp_mv(amean), err, note))
+        true_mv = amp_to_vpp_mv(statistics.median(base_amp))
+
+        for lvl in (0, 4, 6, 7, 8):
+            lk.send(cmd_noise(lvl, att), 0.45)
+            time.sleep(0.15)
+            vs, amps = [], []
+            for _ in range(5):
+                mm = lk.read_measure(0.45)
+                if mm["V"] is not None:
+                    vs.append(mm["V"])
+                v = lk.read_lockin()
+                if v:
+                    amps.append(lockin_amp_lsb(*v))
+            if not vs or not amps:
+                continue
+            vmed = statistics.median(vs)
+            amed = statistics.median(amps)
+            de = (vmed - true_mv) / true_mv * 100 if true_mv else 0
+            le = (amp_to_vpp_mv(amed) - true_mv) / true_mv * 100 if true_mv else 0
+            print("    %-4d %-4d %-8.0f %-8.0f %-10.0f%% %-8.0f %-7.1f%%"
+                  % (att, lvl, true_mv, vmed, de, amp_to_vpp_mv(amed), le))
+        print()
 
     # ---- 4. 关闭，恢复现场 ----
     lk.send(cmd_noise(0, 0), 0.3)

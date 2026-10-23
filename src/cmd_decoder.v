@@ -159,6 +159,7 @@ module cmd_decoder (
             sf_run      <= 1'b0;
             cal_load    <= 1'b0;
             spec_req    <= 1'b0;
+            lk_req      <= 1'b0;               // [10-23] 必须每拍清零, 否则帧会无限重发
             tb_set      <= 1'b0;
             pre_set     <= 1'b0;
             // [10-17 修复·关键] 下面这几个脉冲也必须每拍默认清零 -- 

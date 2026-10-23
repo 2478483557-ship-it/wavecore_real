@@ -269,7 +269,7 @@ assign ty_show = ty_src_sel_w ? nn_as_ty : wave_type_w;
     // ---- 0.7c [0x8E] 幅度谱帧相关线(同样必须先声明后使用; 下方 3.7/3.9 会用到) ----
     wire        spec_req_w;    // 0x8E 请求脉冲(cmd_decoder 输出)
 // [10-23] 锁相放大 / 噪声注入
-wire        lk_noise_w;      // [0x99] 噪声档位
+wire [3:0]  lk_noise_w;      // [0x99] 噪声档位(4 位! 写成 1 位会把档位截成 0/1)
 wire [2:0]  lk_att_w;        // [0x99] 信号衰减
 wire        lk_en_w;         // [0x9A]
 wire        lk_req_w;        // [0x9B]
@@ -412,7 +412,9 @@ wire        lk_done_w, lk_act_w, lk_txd_w;
     da_send u_da (
         .clk     (sys_clk  ),
                 // [10-16] 回放使能时用 IFFT 结果驱动 DAC, 否则仍由 DDS 驱动(DDS 功能不受影响)
-        .sine_in (play_en_w ? da_play_w : sine_mix ),
+        // [10-23] 注噪/衰减都关时直接旁路，保证与加功能之前逐位相同
+        .sine_in (play_en_w ? da_play_w :
+                  ((lk_noise_w == 4'd0 && lk_att_w == 3'd0) ? sine_out : sine_mix)),
         .da_clk  (da_clk   ),
         .da_data (da_data  )
     );
