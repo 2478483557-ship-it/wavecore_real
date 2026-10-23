@@ -1,23 +1,23 @@
 //===========================================================================
 // 模块名   : fft_demo (v3.3 资源修复版)
-// 功能     : FFT 频谱引擎 —— 采样缓存→burst 喂 xfft_0(BFP)→双峰检测
+// 功能     : FFT 频谱引擎 -- 采样缓存->burst 喂 xfft_0(BFP)->双峰检测
 //
 // v3.3 (2026-09-30) 【必须保留的修复, 别再改回去】
-//   问题: 本模块占全设计 86% 的 LUT 和 93% 的寄存器 —— 17564 LUT / 35558 FF,
+//   问题: 本模块占全设计 86% 的 LUT 和 93% 的寄存器 -- 17564 LUT / 35558 FF,
 //         其中 xfft IP 只占 1771 LUT / 2550 FF, 剩下 15793 LUT / 33008 FF
 //         全是它自己"写"出来的。根因是 f_ram 没进块 RAM:
 //         f_ram 声明 4096x8 = 32768 bit, 而 33008 - 32768 = 240, 正好等于本模块
-//         除数组外所有计数器/状态寄存器之和(手工加总 233) —— 它就是 32768 个 FDRE。
+//         除数组外所有计数器/状态寄存器之和(手工加总 233) -- 它就是 32768 个 FDRE。
 //         4032:1 x 8bit 的读口组合 mux 再吃掉约 8192 LUT6 + 4096 MUXF7 + 2048 MUXF8
 //         (实测 MUXF7=4379 / MUXF8=2180, 与估算几乎完全吻合)。
 //   证据: 已布线时序报告里直接写着 u_fft_demo/f_ram_reg[3025][5] 是 FDRE;
 //         分层资源报告里 u_fft_demo 的 RAMB18=12 = xfft 11 + hann 1, f_ram 贡献 0。
 //   为什么推断失败: 旧写法的读口带**异步复位** (if (!rst_n) m_q<=0),
-//         Vivado 对 RAM 输出寄存器不支持异步复位 —— 同一条综合日志里
+//         Vivado 对 RAM 输出寄存器不支持异步复位 -- 同一条综合日志里
 //         uart_mirror 的 fifo_reg 就是这么被 "dissolved into registers" 的。
 //         另外旧写法还有两处隐患: f_ram[14'd0] 常量地址读、写口混在主状态机里、
 //         地址位宽 14 但数组深度只有 4096。
-//   修法: 改成教科书 Simple-Dual-Port 模板 —— 写口独立 always(无复位)、
+//   修法: 改成教科书 Simple-Dual-Port 模板 -- 写口独立 always(无复位)、
 //         读口独立 always(去异步复位)、地址统一截到 12 位。
 //   预期收益: LUT 20829 -> 约 12600 (61%), FF 35818 -> 约 3050 (7%),
 //         多用一个 RAMB36(f_ram 32Kb)。布线余量打开后 ILA 也能重新打开。
@@ -54,7 +54,7 @@ module fft_demo #(
 
     //================ 时域缓存(块 RAM, 32768 bit) ================
     // 注意: 这个数组必须是块 RAM。若被综合成触发器, 会直接吃掉 32768 个 FF
-    // 外加一个 4096:1 的巨型读 mux —— 详见文件头 v3.3 说明。
+    // 外加一个 4096:1 的巨型读 mux -- 详见文件头 v3.3 说明。
     (* ram_style = "block" *) reg [7:0] f_ram [0:4095];
     reg [13:0] wr_idx;
     reg [31:0] decim_cnt;
@@ -104,7 +104,7 @@ module fft_demo #(
 
     reg [7:0] m_q;   // FEED 用的当前样点(独立读 always 产生)
     // [10-19 修复] 下面三个 wire 原来声明在 180 行之后，但 146 行（ST_FEED）就要用 win_out。
-    //   Verilog-2001 会隐式声明成 1 位 wire —— {16'd0, win_out} 就只有 17 位，
+    //   Verilog-2001 会隐式声明成 1 位 wire -- {16'd0, win_out} 就只有 17 位，
     //   送进 32 位 FFT 输入时高位补零，等于只有 1 个比特有效。
     //   Vivado 恰好取了后面的显式声明所以实测正常，但这是运气，不是设计。
     wire signed [15:0] samp_s;
@@ -186,7 +186,7 @@ module fft_demo #(
     always @(posedge clk)
         if (rd_en_w) m_q <= f_ram[rd_addr_w];
 
-    // 组合换算(读寄存器) —— 声明已前置到模块上方（见 10-19 修复注释）
+    // 组合换算(读寄存器) -- 声明已前置到模块上方（见 10-19 修复注释）
     assign samp_s  = $signed({8'd0, m_q}) - 16'sd128;
     assign prod    = samp_s * $signed({1'b0, wq});
     assign win_out = prod[30:15];
@@ -243,17 +243,17 @@ module fft_demo #(
                     end
                 end
                 if (m_data_tlast) begin
-                    // [09-30 深夜 BUGFIX] 原来写 16'd50000 / 12'd2048 —— 按 Verilog 位宽规则
+                    // [09-30 深夜 BUGFIX] 原来写 16'd50000 / 12'd2048 -- 按 Verilog 位宽规则
                     //   该式被提升到左值 fft_hz 的 24 位, 于是 bin>=336 (4101Hz) 起静默溢出,
                     //   读数恰好偏 -16384Hz。改成 32 位后 4095*50000=204,750,000 不再溢出。
                     //   证据: hw_analysis/check_self_fft_overflow.py
-                    fft_hz  <= ((peak_bin * fs_use) + 32'd2048) >> 12;
+                    fft_hz  <= (({32'd0, peak_bin} * fs_use) + 44'd2048) >> 12;   // [10-23] 显式加宽, 防高频溢出
                     fft_done <= 1'b1;
-                    // 第二峰门限: 幅度≥主峰1/8 且 相隔>2 (方波3次谐波≈1/3~1/4 稳定通过)
+                    // 第二峰门限: 幅度>=主峰1/8 且 相隔>2 (方波3次谐波≈1/3~1/4 稳定通过)
                     if (sec_bin != 14'd0 && sec_mag >= {3'b0, peak_mag[17:3]} &&
                         (sec_bin > peak_bin + 14'd2 || sec_bin + 14'd2 < peak_bin)) begin
                         // [09-30 深夜 BUGFIX] 同上, 32 位防溢出
-                        fft_hz2  <= ((sec_bin * fs_use) + 32'd2048) >> 12;
+                        fft_hz2  <= (({32'd0, sec_bin} * fs_use) + 44'd2048) >> 12;
                         fft_done2 <= 1'b1;
                     end
                     bin_cnt  <= 14'd0;

@@ -43,7 +43,7 @@ module wave_frame (
     // ---- [v6.0] 前置声明(必须先声明后使用) ----
     //   下面 blk_mem_gen_0 的 .addra() 端口里直接用到了 wr_idx / wav_act_r,
     //   若把声明留在例化之后, xvlog 会报 VRFC 10-2938 "already implicitly declared"
-    //   —— 即它们先被当成 **1 位隐式网**, 与 board_top.v 曾经修过的隐式线网是同一类坑。
+    //   -- 即它们先被当成 **1 位隐式网**, 与 board_top.v 曾经修过的隐式线网是同一类坑。
     reg [9:0]  wr_idx;      // 采集写指针(1024 深环形)
     reg [31:0] dcnt;        // 抽取分频计数
     reg        wav_act_r;   // 1 = 正在发送(此期间不写 RAM, 地址口归读)
@@ -99,6 +99,10 @@ module wave_frame (
     reg        req_l;
     // (wav_act_r 的声明已上移到 blk_mem_gen_0 例化之前, 见上)
     reg        guard;
+    // [10-23] 看门狗: 卡在 HOLD/FILL 超过 ~335ms(50MHz) 就放弃本次请求。
+    //   原来没有超时，一旦触发条件不满足就永久挂住，并拉高 wav_hold
+    //   把测量一起冻死 -- 实机表现为整块板子静默，只能重新配置 FPGA。
+    reg [23:0] wdog;
     reg [3:0]  hidx;
     reg [9:0]  cptr;
     reg [9:0]  pidx;
@@ -159,13 +163,32 @@ module wave_frame (
             if (req) req_l <= 1'b1;
 
             case (st)
-                ST_IDLE: if (req_l) st <= ST_HOLD;
+                ST_IDLE: begin
+                    wdog <= 24'd0;
+                    // [10-23] 高频档(decim < 100)不支持波形帧:
+                    //   该路径在极小 decim 下采集永远凑不满, 会一路残留忙态,
+                    //   实测连累之后的 T1 请求也失败。这里直接拒绝, 让上层超时即可。
+                    //   频谱(0x8A/0x8E)不受影响, T3/T4 本来就是给频谱用的。
+                    if (req_l && (decim_use >= 32'd100)) st <= ST_HOLD;
+                    else if (req_l)                      req_l <= 1'b0;
+                end
                 ST_HOLD: begin
-                    if (!meas_busy && !fft_busy && trig_ok) begin   // 等总线+等触发
+                    // [10-23] 不再等 meas_busy: 高频档下测量模块几乎一直忙,
+                    //   结果是波形请求永远进不去、每帧都靠看门狗超时放弃。
+                    //   波形采集只是读 ad_cap, 与测量并不冲突; 发送冲突由 TX 仲裁解决。
+                    if (!fft_busy && trig_ok) begin   // 只避让谱帧, 并等触发
                         trig_wptr <= wr_idx;      // [v6.0] 锁存触发位置(不再归零)
                         fill_cnt  <= 10'd0;
+                        wdog      <= 24'd0;
                         st        <= ST_FILL;
                     end
+                    else if (wdog == 24'hFFFFFF) begin                // [10-23] 超时放弃
+                        // 必须同时撤掉 req_l: wav_hold = req_l, 不清就会立刻重进 HOLD,
+                        // 变成活锁, 而且测量被永久暂停(实机看着像整块板子死了)
+                        req_l <= 1'b0;
+                        st    <= ST_IDLE;
+                    end
+                    else wdog <= wdog + 24'd1;
                 end
                 ST_FILL: begin
                     // [v6.0] 触发后再写 (1024-pre_n) 个采样点就冻结;
@@ -184,6 +207,13 @@ module wave_frame (
                         end
                         else fill_cnt <= fill_cnt + 10'd1;
                     end
+                    else if (wdog == 24'hFFFFFF) begin                // [10-23] 超时放弃
+                        // 必须同时撤掉 req_l: wav_hold = req_l, 不清就会立刻重进 HOLD,
+                        // 变成活锁, 而且测量被永久暂停(实机看着像整块板子死了)
+                        req_l <= 1'b0;
+                        st    <= ST_IDLE;
+                    end
+                    else wdog <= wdog + 24'd1;
                 end
                 ST_HEAD: begin
                     if (guard) begin

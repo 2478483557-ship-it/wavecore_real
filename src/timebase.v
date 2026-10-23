@@ -37,8 +37,8 @@ module timebase (
         else if (set) begin
             case (sel_in)
                 2'd1:    begin decim <= 32'd4000; fs_hz <= 32'd12500;  sel_out <= 2'd1; end
-                2'd2:    begin decim <= 32'd500;  fs_hz <= 32'd100000; sel_out <= 2'd2; end
-                2'd3:    begin decim <= 32'd250;  fs_hz <= 32'd200000; sel_out <= 2'd3; end
+                2'd2:    begin decim <= 32'd8;   fs_hz <= 32'd6250000;  sel_out <= 2'd2; end  // [10-23] 高频档 fs=6.25MHz Nyquist 3.1MHz
+                2'd3:    begin decim <= 32'd4;   fs_hz <= 32'd12500000; sel_out <= 2'd3; end  // [10-23] 高频档 fs=12.5MHz Nyquist 6.25MHz
                 default: begin decim <= 32'd1000; fs_hz <= 32'd50000;  sel_out <= 2'd0; end
             endcase
         end
