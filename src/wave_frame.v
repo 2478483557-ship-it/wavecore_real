@@ -162,9 +162,22 @@ module wave_frame (
             tx_start <= 1'b0;
             if (req) req_l <= 1'b1;
 
+            // [10-23] 全局看门狗: 任何非 IDLE 状态卡住超过 ~335ms 都强制回 IDLE。
+            //   只给 HOLD/FILL 加超时是不够的 —— 实测切到 T3 再切回 T1 后,
+            //   wave_frame 会停在发送态出不来; 一旦 wav_act_r 挂住, 写使能就停了,
+            //   之后所有波形请求都超时, 表现为"波形永久失效"。
+            if (st != ST_IDLE && wdog == 24'hFFFFFF) begin
+                wav_act_r <= 1'b0;
+                req_l     <= 1'b0;
+                wdog      <= 24'd0;
+                st        <= ST_IDLE;
+            end
+            else begin
+            if (st == ST_IDLE) wdog <= 24'd0;
+            else               wdog <= wdog + 24'd1;
+
             case (st)
                 ST_IDLE: begin
-                    wdog <= 24'd0;
                     // [10-23] 高频档(decim < 100)不支持波形帧:
                     //   该路径在极小 decim 下采集永远凑不满, 会一路残留忙态,
                     //   实测连累之后的 T1 请求也失败。这里直接拒绝, 让上层超时即可。
@@ -176,19 +189,14 @@ module wave_frame (
                     // [10-23] 不再等 meas_busy: 高频档下测量模块几乎一直忙,
                     //   结果是波形请求永远进不去、每帧都靠看门狗超时放弃。
                     //   波形采集只是读 ad_cap, 与测量并不冲突; 发送冲突由 TX 仲裁解决。
-                    if (!fft_busy && trig_ok) begin   // 只避让谱帧, 并等触发
+                    // [10-23] 连 fft_busy 也不再等: IP FFT 是连续运行的,
+                    //   一旦它在小 decim 下卡住, fft_busy 会永久拉高, 波形就再也发不出来。
+                    //   TX 仲裁里波形本来就优先于 FFT, 这个等待是多余的。
+                    if (trig_ok) begin
                         trig_wptr <= wr_idx;      // [v6.0] 锁存触发位置(不再归零)
                         fill_cnt  <= 10'd0;
-                        wdog      <= 24'd0;
                         st        <= ST_FILL;
                     end
-                    else if (wdog == 24'hFFFFFF) begin                // [10-23] 超时放弃
-                        // 必须同时撤掉 req_l: wav_hold = req_l, 不清就会立刻重进 HOLD,
-                        // 变成活锁, 而且测量被永久暂停(实机看着像整块板子死了)
-                        req_l <= 1'b0;
-                        st    <= ST_IDLE;
-                    end
-                    else wdog <= wdog + 24'd1;
                 end
                 ST_FILL: begin
                     // [v6.0] 触发后再写 (1024-pre_n) 个采样点就冻结;
@@ -207,13 +215,6 @@ module wave_frame (
                         end
                         else fill_cnt <= fill_cnt + 10'd1;
                     end
-                    else if (wdog == 24'hFFFFFF) begin                // [10-23] 超时放弃
-                        // 必须同时撤掉 req_l: wav_hold = req_l, 不清就会立刻重进 HOLD,
-                        // 变成活锁, 而且测量被永久暂停(实机看着像整块板子死了)
-                        req_l <= 1'b0;
-                        st    <= ST_IDLE;
-                    end
-                    else wdog <= wdog + 24'd1;
                 end
                 ST_HEAD: begin
                     if (guard) begin
@@ -272,6 +273,7 @@ module wave_frame (
                 end
                 default: st <= ST_IDLE;
             endcase
+            end
         end
     end
 

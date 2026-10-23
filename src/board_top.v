@@ -560,7 +560,11 @@ wire        lk_done_w, lk_act_w, lk_txd_w;
         .clk        (sys_clk   ),
         .rst_n      (sys_rst_n ),
         .ad_cap     (ad_cap    ),
-        .decim_cfg  (tb_decim_w),
+        // [10-23] 波形帧固定用 50kHz(decim=1000), 不再跟随 0x8D 时基。
+        //   原因: 高频档(decim 4/8)下波形缓存根本凑不满, 会残留忙态,
+        //   而且切回 T1 后也恢复不了 —— 波形通路被彻底拖死。
+        //   频谱(0x8A/0x8E)仍然用 tb_decim_w, 高频观察走频谱。
+        .decim_cfg  (32'd1000),
         .req        (wave_req_w),
         .trig_mode  (trig_mode_w),
         .pre_cfg    (pre_sel_w ),   // [0x8F] 预触发档(0=0% 1=25% 2=50% 3=75%)

@@ -15,7 +15,7 @@ v1.17 变更(2026-09-30, **文本行有破坏性改动**):
 
 v1.20 变更(2026-10-01):
   - 0x8D 选择时基，等效采样率 12.5k～200kHz
-    **⚠️ 2026-10-14 上位机只开放 T1(50k) / T2(12.5k)**；T3/T4 已屏蔽，见 TIMEBASE_SAMPLE_RATES
+    **四档全部开放**：T1 50k / T2 12.5k / T3 6.25MHz / T4 12.5MHz（T3/T4 为高频频谱档）
   - 0x8E 请求512点8bit对数压缩幅度谱帧
 """
 
@@ -39,10 +39,12 @@ FRAME_HEADER = b"\x5A\xA5"
 #       host/run_waterfall_T3.bat / T4.bat（已删，可在 git 里找回）
 # ============================================================================
 TIMEBASE_SAMPLE_RATES = {
-    0: 50_000,      # T1 默认（上电即此档）
-    1: 12_500,      # T2 细分辨率 Δf = 12.2 Hz
-    # 2: 100_000,   # T3 —— 2026-10-14 上位机屏蔽
-    # 3: 200_000,   # T4 —— 2026-10-14 上位机屏蔽
+    0: 50_000,        # T1 默认（上电即此档）
+    1: 12_500,        # T2 细分辨率 Δf = 12.2 Hz
+    # [2026-10-23] T3/T4 改为高频频谱档（原 100k/200k 实机抓不到数据）：
+    #   只服务频谱，波形帧固定 50kHz，不随时基变化。
+    2: 6_250_000,     # T3 高频：覆盖 0~3.1MHz，Δf = 6103 Hz
+    3: 12_500_000,    # T4 高频：覆盖 0~6.25MHz，Δf = 12207 Hz
 }
 
 MEASUREMENT_PATTERN = re.compile(
@@ -192,8 +194,9 @@ def command_set_timebase(tier: int) -> bytes:
     """
     生成 0x8D 时基档位命令（协议 v1.20）。
 
-    tier: 目前开放 0=T1 50kHz(默认) / 1=T2 12.5kHz
-          （2=T3 100kHz / 3=T4 200kHz 已由上位机屏蔽，见 2026-10-14 说明）
+    tier: 0=T1 50kHz(默认) / 1=T2 12.5kHz / 2=T3 6.25MHz / 3=T4 12.5MHz
+          T3/T4 是**高频频谱档**（2026-10-23 起），只对 0x8A/0x8E 生效；
+          0x83 波形帧始终按 50kHz 采，不随时基变化。
 
     ⚠️ **0x8D 是静默命令（没有 ACK / 回执行）** —— "发过去没反应"是**正常**的。
        只能靠可观察量判断生效：同一个 1kHz 方波，自研谱峰 bin 号会变
@@ -204,7 +207,7 @@ def command_set_timebase(tier: int) -> bytes:
     """
     if tier not in TIMEBASE_SAMPLE_RATES:
         raise ValueError(
-            "tier 必须属于当前开放的档位 %s（T%d～T%d）；T3/T4 已于 2026-10-14 屏蔽"
+            "tier 必须属于当前开放的档位 %s（T1~T4）"
             % (
                 "/".join(str(k) for k in sorted(TIMEBASE_SAMPLE_RATES)),
                 min(TIMEBASE_SAMPLE_RATES) + 1,

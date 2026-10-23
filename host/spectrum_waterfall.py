@@ -210,7 +210,7 @@ def main():
     ap.add_argument("--wave", type=int, choices=[0, 1, 2], metavar="N",
                     help="开机先设波形(0x88)：0=正弦 1=方波 2=三角")
     ap.add_argument("--timebase", type=int, choices=sorted(TB_FS), metavar="N",
-                    help="开机先设时基(0x8D)：0=T1 50k(默认) 1=T2 12.5k （T3/T4 已于 2026-10-14 屏蔽）")
+                    help="开机先设时基(0x8D)：0=T1 50k 1=T2 12.5k 2=T3 6.25MHz 3=T4 12.5MHz（2/3 为高频频谱档）")
     ap.add_argument("--sweep", action="store_true",
                     help="开机先启动扫频(0x8B, 1k->20k) —— 瀑布出斜线")
     ap.add_argument("--sweep-stop", action="store_true",
