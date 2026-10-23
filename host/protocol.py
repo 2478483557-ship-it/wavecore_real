@@ -542,6 +542,38 @@ def parse_waveform_frame(frame: bytes, sample_rate_hz: int = 50_000):
     }
 
 
+def parse_lockin_frame(frame: bytes):
+    """
+    解析锁相放大的 I/Q 帧（0x9B 请求后回传）。
+
+    格式：5A A5 03 00 10 + I(6B) + Q(6B) + N(4B) + SUM   —— 共 22 字节
+    I/Q 为 48 位有符号小端，N 为 32 位无符号。
+
+    幅度换算（实测口径）：
+        峰值(ADC 码) = 2 * sqrt(I^2 + Q^2) / (32767 * N)
+        峰峰值(mV)   = 峰值 * 2 * 36.33
+    其中 32767 是参考满量程（Q1.15），36.33 是每 LSB 对应的模块输入端毫伏。
+    """
+    if len(frame) < 22:
+        raise ValueError("锁相帧太短")
+    if frame[:2] != FRAME_HEADER or frame[2] != 0x03:
+        raise ValueError("不是锁相帧")
+    # 校验和只覆盖帧体(不含 5A A5 帧头), 与固件 spec_frame 的口径一致
+    if sum(frame[2:21]) & 0xFF != frame[21]:
+        raise ValueError("锁相帧校验失败")
+
+    i_val = int.from_bytes(frame[5:11], "little", signed=True)
+    q_val = int.from_bytes(frame[11:17], "little", signed=True)
+    count = int.from_bytes(frame[17:21], "little")
+
+    return {
+        "type": "lockin",
+        "i": i_val,
+        "q": q_val,
+        "n": count,
+    }
+
+
 def parse_spectrum_frame(frame: bytes):
     """
     解析FPGA返回的512点幅度谱帧。
@@ -663,6 +695,8 @@ class StreamParser:
                         )
                     elif frame_type == 0x02:
                         event = parse_spectrum_frame(frame)
+                    elif frame_type == 0x03:
+                        event = parse_lockin_frame(frame)
                     else:
                         raise ValueError(
                             f"不支持的二进制帧类型：0x{frame_type:02X}"

@@ -2,6 +2,7 @@
 """WaveCore FPGA上位机。"""
 
 import csv
+import math
 import queue
 import threading
 import time
@@ -18,6 +19,7 @@ from matplotlib.figure import Figure
 
 from protocol import (
     DEFAULT_VPP_KN,
+    build_command,
     RAW_LSB_KN,
     StreamParser,
     TIMEBASE_SAMPLE_RATES,
@@ -357,6 +359,10 @@ class WaveCoreApp:
         self.wave_src_info_var = tk.StringVar(
             value="来源：规则法（TY 行随测量自动上报）"
         )
+        # [10-23] 锁相放大（0x9A/0x9B/0x9C）
+        self.lockin_enabled_var = tk.BooleanVar(value=False)
+        self.lockin_periods_var = tk.StringVar(value="32")
+        self.lockin_info_var = tk.StringVar(value="未启用")
         self.self_fft_var = tk.StringVar(value="-- / -- / -- Hz")
         # [10-18] 当前实际使用的窗 (来自 SF/S2/S3 之后那条 WIN= 行)
         self.win_used_var = tk.StringVar(value="Hann 窗")
@@ -761,8 +767,28 @@ class WaveCoreApp:
             row=10, column=3, columnspan=2, padx=(12, 0), pady=(4, 0), sticky="w"
         )
 
+        # ---- 行11: 锁相放大 (v1.23) ----
+        ttk.Label(controls, text="锁相放大：").grid(row=11, column=0, pady=(4, 0))
+        ttk.Checkbutton(
+            controls, text="启用", variable=self.lockin_enabled_var,
+            command=self.toggle_lockin,
+        ).grid(row=11, column=1, sticky="w", pady=(4, 0))
+
+        ttk.Label(controls, text="积分周期：").grid(row=11, column=2, padx=(10, 0), pady=(4, 0))
+        ttk.Spinbox(
+            controls, from_=1, to=4096, increment=1, width=6,
+            textvariable=self.lockin_periods_var,
+        ).grid(row=11, column=3, padx=4, pady=(4, 0), sticky="w")
+
+        ttk.Button(controls, text="读取一次", command=self.read_lockin).grid(
+            row=11, column=4, padx=(6, 0), pady=(4, 0), sticky="w"
+        )
+        _fixed_label(controls, self.lockin_info_var, 42).grid(
+            row=11, column=5, columnspan=5, padx=(10, 0), pady=(4, 0), sticky="w"
+        )
+
         _fixed_label(controls, self.applied_settings_var, 96).grid(
-            row=11, column=0, columnspan=10, pady=(3, 0), sticky="w"
+            row=12, column=0, columnspan=10, pady=(3, 0), sticky="w"
         )
 
         # [10-19 演示模式] 记住上方三行，按 F11 时整行隐藏，绘图区铺满。
@@ -1179,6 +1205,32 @@ class WaveCoreApp:
             except RuntimeError:
                 pass
         self._schedule_spectrum_request()
+
+    # ===================== [10-23 v1.23] 锁相放大 =====================
+    def toggle_lockin(self):
+        """开/关锁相放大（0x9A），并顺带下发积分周期（0x9C）。"""
+        on = self.lockin_enabled_var.get()
+        try:
+            periods = int(self.lockin_periods_var.get())
+            if not (1 <= periods <= 4096):
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("锁相参数", "积分周期应为 1~4096 的整数")
+            self.lockin_enabled_var.set(False)
+            return
+
+        self._send(build_command(0x9C, bytes([periods & 0xFF, (periods >> 8) & 0xFF])),
+                   "锁相积分周期 = %d" % periods)
+        self._send(build_command(0x9A, bytes([1 if on else 0])),
+                   "锁相已开" if on else "锁相已关")
+        self.lockin_info_var.set("已开启，点“读取一次”取结果" if on else "已关闭")
+
+    def read_lockin(self):
+        """请求一帧 I/Q（0x9B）。结果显示在 lockin_info_var。"""
+        if not self.lockin_enabled_var.get():
+            messagebox.showinfo("锁相", "请先勾选“启用”")
+            return
+        self._send(build_command(0x9B, b""), "请求锁相 I/Q")
 
     def set_waveform_choice(self):
         choices = {"正弦": 0, "方波": 1, "三角": 2}
@@ -2113,6 +2165,20 @@ class WaveCoreApp:
                 + " Hz"
                 + self._self_fft_note(values)
             )
+
+        elif event_type == "lockin":
+            # [10-23] I/Q -> 幅度/相位
+            #   峰值(码) = 2*sqrt(I^2+Q^2)/(32767*N)；峰峰(mV) = 峰值*2*36.33
+            i_val, q_val, cnt = event["i"], event["q"], event["n"]
+            if cnt:
+                amp = 2.0 * math.hypot(i_val, q_val) / (32767.0 * cnt)
+                phase = math.degrees(math.atan2(q_val, i_val))
+                self.lockin_info_var.set(
+                    "幅度 %.0f mV（峰峰）｜相位 %.0f°｜N=%d"
+                    % (amp * 2.0 * 36.33, phase, cnt)
+                )
+            else:
+                self.lockin_info_var.set("锁相帧 N=0（无有效数据）")
 
         elif event_type == "waveform":
             # [10-23] 波形帧固定 50kHz。解析器是按当前档位 fs 填的 sample_rate_hz，
