@@ -58,21 +58,6 @@ module fft_demo #(
     (* ram_style = "block" *) reg [7:0] f_ram [0:4095];
     reg [13:0] wr_idx;
     reg [31:0] decim_cnt;
-    // [10-23 关键修复] 抽取比一变就必须把计数器清零。
-    //   decim_cnt 是 32 位，只在 == decim_use-1 时归零。
-    //   切时基时 decim 从 1000 突降到 8，而计数器可能已经数到 500 多，
-    //   于是永远等不到 7，要一直数到 2^32 才回绕 —— 50MHz 下 **86 秒**。
-    //   实机现象：T1 正常，一切 T3/T4 官方 FFT 就再也不出 S= 行（切回 T1 也不恢复）。
-    reg [31:0] decim_prev;
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) decim_prev <= 32'd0;
-        else        decim_prev <= decim_use;
-    end
-    wire decim_chg = (decim_prev != decim_use);
-    // [10-23] 抽取比 < 100（T3/T4 高频档）时让 IP 核保持空闲。
-    //   实测：decim=8 时 IP 核状态机会永久挂死，切回 T1 也不恢复（只能重配 FPGA）。
-    //   T3/T4 的高频谱线由自研 FFT(0x8A) 与谱帧(0x8E) 提供，IP 核这两档不参与。
-    wire cap_ok = (decim_use >= 32'd100);
 
     //================ xfft_0 ================
     reg        cfg_tvalid;
@@ -143,15 +128,7 @@ module fft_demo #(
             s_data_tlast  <= 1'b0;
             case (st)
                 ST_CAP: begin                       // 写缓存(写口见上方独立 always)
-                    if (!cap_ok) begin              // [10-23] 高频档: 原地待命, 不推进
-                        decim_cnt <= 32'd0;
-                    end
-                    else if (decim_chg) begin       // [10-23] 抽取比刚变: 计数器归零
-                        decim_cnt <= 32'd0;
-                    end
-                    // [10-23] 判据用 >= 而不是 ==：计数器若已超过阈值（切档瞬间常见），
-                    //   用 == 要等它数到 2^32 才回绕（50MHz 下 86 秒），实机就是"切档后不动了"。
-                    else if (decim_cnt >= decim_use - 32'd1) begin
+                    if (decim_cnt == decim_use - 32'd1) begin
                         decim_cnt <= 32'd0;
                         // 写 f_ram 已挪到上方独立 always(必需: 保住块 RAM 推断)
                         if (wr_idx == NFFT - 1) begin
@@ -191,8 +168,7 @@ module fft_demo #(
 
     // ---- 写口: 独立 always, 不带复位(带复位会被拒绝推断为 RAM) ----
     // 放在 st 声明之后, 避免"先用后声明"(xvlog 严格模式会报 VRFC 10-3380)
-    wire        wr_en_w   = (st == ST_CAP) && cap_ok && !decim_chg &&
-                            (decim_cnt >= decim_use - 32'd1);
+    wire        wr_en_w   = (st == ST_CAP) && (decim_cnt == decim_use - 32'd1);
     wire [11:0] wr_addr_w = wr_idx[11:0];       // 数组深 4096, 地址截到 12 位
 
     always @(posedge clk)

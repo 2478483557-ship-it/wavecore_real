@@ -535,12 +535,24 @@ wire [11:0] wid_hi_w;
         .sel_out (         )
     );
 
+    // [10-23] 给 IP 核 FFT 一个**安全的抽取比**。
+    //   根因：xfft 核的 C_HAS_ARESETN=0，**没有复位端口**。
+    //     T3/T4 的 decim=8/4 会让它进入无法恢复的状态，此后 S=/A= 永久停发，
+    //     切回 T1 也不复活（实测；加过计数器复位、采集闸门、ST_WAIT 看门狗，均无效）。
+    //   处置：与 wave_frame 同样思路——高频档不让它接触 decim<100。
+    //     T1/T2 行为与升级前逐位相同；T3/T4 时 IP 核按 50kHz 继续工作。
+    //   代价：T3/T4 下 S=/A= 只覆盖 0~25kHz（高频谱线由自研 FFT 与谱帧提供）。
+    wire [31:0] fft_decim_w = (tb_decim_w >= 32'd100) ? tb_decim_w : 32'd1000;
+    wire [31:0] fft_fs_w    = (tb_decim_w >= 32'd100) ? tb_fs_w
+
+                                                       : 32'd50000;
+
     fft_demo u_fft_demo (
         .clk     (sys_clk    ),
         .rst_n   (sys_rst_n  ),
         .ad_cap  (ad_cap     ),
-        .decim_cfg(tb_decim_w ),
-        .fs_cfg  (tb_fs_w    ),
+        .decim_cfg(fft_decim_w),   // [10-23] 高频档回落到 1000，见上
+        .fs_cfg  (fft_fs_w   ),
         .fft_hz  (fft_hz_w   ),
         .fft_hz2 (fft_hz2_w  ),
         .fft_done(fft_done_w ),
