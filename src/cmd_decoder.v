@@ -68,6 +68,7 @@ module cmd_decoder (
     output reg         dbg_read,   // [0x94] 状态回读触发(1拍脉冲)  [10-17]
     output reg         dbg_wd,     // [0x9D] 波形识别内部量回读(1拍脉冲) [10-23]
     output reg         dbg_fr,     // [0x9E] fft_report 内部状态回读 [10-24]
+    output reg         dbg_fd,     // [0x9F] fft_demo 状态回读 [10-24]
     output reg         dbg_nn,     // [0x95] 神经网络结果回读(1拍脉冲)  [10-17]
     output reg         ty_src_sel, // [0x96] 识别来源: 0=TY规则法(默认) 1=神经网络
     output reg         win_auto,   // [0x97] 自适应选窗: 0=手动(默认) 1=自动
@@ -137,6 +138,7 @@ module cmd_decoder (
             dbg_nn      <= 1'b0;
             dbg_wd      <= 1'b0;
             dbg_fr      <= 1'b0;
+            dbg_fd      <= 1'b0;
             ty_src_sel  <= 1'b0;
             win_auto    <= 1'b0;
             avg_en      <= 1'b0;
@@ -183,6 +185,7 @@ module cmd_decoder (
             dbg_nn      <= 1'b0;
             dbg_wd      <= 1'b0;   // [10-23] 0x9D 同理: 不每拍清零就会无限重触发
             dbg_fr      <= 1'b0;   // [10-24] 0x9E 同样要每拍清零
+            dbg_fd      <= 1'b0;   // [10-24] 0x9F 同
             if (rx_done) begin
                 case (st)
                     ST_H1: begin
@@ -276,6 +279,9 @@ module cmd_decoder (
                                 end
                                 8'h97: begin             // [10-18] 自适应选窗
                                     win_auto <= pbuf[0][0];
+                                end
+                                8'h9F: begin             // [10-24] fft_demo 状态
+                                    dbg_fd <= 1'b1;
                                 end
                                 8'h9E: begin             // [10-24] fft_report 内部状态
                                     dbg_fr <= 1'b1;

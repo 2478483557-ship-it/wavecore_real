@@ -36,21 +36,26 @@ module wave_id (
 
     // ---- 统计状态 ----
     reg  [1:0]  ph;              // 0=测幅 1=计数
-    reg  [10:0] cnt;             // 0..2047 (降采样点计数)
+    // [10-24] 窗口 2048 -> 8192。
+    //   根因：统计窗口若不覆盖整数个周期，mid/span 会随相位漂移。
+    //   100kHz、decim=4 时 2048 点 = 16.38 个周期，小数部分导致 hi_cnt
+    //   在 956 和 1265 两个簇之间跳（实测），判决随之在"正弦/其他"间摇摆。
+    //   放大 4 倍后 8192 点 = 65.5 个周期，小数占比降到 1/4，稳定性显著提高。
+    reg  [12:0] cnt;             // 0..8191 (降采样点计数)
     reg  [7:0]  mn, mx, mid, span;
     // [10-23] 回读要用"和判定同一时刻"的值: span/hi_cnt 是实时量,
     //   而 wave_type 是窗口结束才锁存的, 直接读会混两个窗口的数据。
     reg  [7:0]  span_r;
     reg  [11:0] hi_r;
-    reg  [11:0] hi_cnt;
+    reg  [12:0] hi_cnt;
     wire [7:0]  th3 = (span >> 2) + (span >> 3);     // 3/8*span
     wire [8:0]  abs_d = (med > mid) ? (med - mid) : (mid - med);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             dcnt<=10'd0; s0<=8'd128; a1<=8'd128; a2<=8'd128;
-            ph<=2'd0; cnt<=11'd0; mn<=8'hFF; mx<=8'h00;
-            mid<=8'h80; span<=8'h00; hi_cnt<=12'd0; wave_type<=2'd3;
+            ph<=2'd0; cnt<=13'd0; mn<=8'hFF; mx<=8'h00;
+            mid<=8'h80; span<=8'h00; hi_cnt<=13'd0; wave_type<=2'd3;
         end
         else begin
             // 节拍发生器
@@ -62,24 +67,24 @@ module wave_id (
                 a2 <= a1;
                 a1 <= s0;            // 注: 流水一节, 无碍统计
 
-                cnt <= (cnt == 11'd2047) ? 11'd0 : (cnt + 11'd1);
+                cnt <= (cnt == 13'd8191) ? 13'd0 : (cnt + 13'd1);
 
-                if (cnt == 11'd2047) begin
+                if (cnt == 13'd8191) begin
                     if (ph == 2'd0) begin
                         mid  <= (mn + mx) >> 1;
                         span <= mx - mn;
                         ph   <= 2'd1;
-                        hi_cnt <= 12'd0;
+                        hi_cnt <= 13'd0;
                     end
                     else begin
                         span_r <= span;             // [10-23] 与判定同步锁存
                         hi_r   <= hi_cnt;
                         if (span < 8'd16)                       wave_type <= 2'd3;
-                        else if (hi_cnt > 12'd1720)             wave_type <= 2'd0;
-                        else if (hi_cnt >= 12'd819 &&
-                                 hi_cnt <= 12'd1270)            wave_type <= 2'd1;
-                        else if (hi_cnt >= 12'd369 &&
-                                 hi_cnt <= 12'd778)             wave_type <= 2'd2;
+                        else if (hi_cnt > 13'd6880)             wave_type <= 2'd0;
+                        else if (hi_cnt >= 13'd3276 &&
+                                 hi_cnt <= 13'd5080)            wave_type <= 2'd1;
+                        else if (hi_cnt >= 13'd1476 &&
+                                 hi_cnt <= 13'd3112)            wave_type <= 2'd2;
                         else                                    wave_type <= 2'd3;
                         ph <= 2'd0;
                         mn <= 8'hFF; mx <= 8'h00;
@@ -91,7 +96,7 @@ module wave_id (
                         if (s0 < mn) mn <= s0;
                     end
                     else begin
-                        if (abs_d > th3) hi_cnt <= hi_cnt + 12'd1;
+                        if (abs_d > th3) hi_cnt <= hi_cnt + 13'd1;
                     end
                 end
             end

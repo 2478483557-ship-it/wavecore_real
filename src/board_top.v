@@ -252,28 +252,36 @@ wire [23:0] wd_rd3 = {12'd0, wid_hi_w};
 wire [23:0] fr_rd1 = 24'd900000 + {16'd0, fr_state_w};
 wire [23:0] fr_rd2 = {3'd0, fr_idle_w[21:8]};
 wire [23:0] fr_rd3 = {16'd0, fr_state_w};
-reg  [1:0]  dbg_src;
+// [10-24] 0x9F: fft_demo 状态 {st, cfg_tready, s_data_tready, m_data_tvalid}
+wire [23:0] fd_rd1 = 24'd950000 + {16'd0, fd_st_w};
+wire [23:0] fd_rd2 = {2'd0, fd_idx_w[23:2]};
+wire [23:0] fd_rd3 = {16'd0, fd_st_w};
+reg  [2:0]  dbg_src;
 always @(posedge sys_clk or negedge sys_rst_n) begin
     if (!sys_rst_n)       dbg_src <= 2'd0;
     else if (dbg_nn_w)    dbg_src <= 2'd1;
     else if (dbg_wd_w)    dbg_src <= 2'd2;
-    else if (dbg_fr_w)    dbg_src <= 2'd3;
+    else if (dbg_fr_w)    dbg_src <= 3'd3;
+    else if (dbg_fd_w)    dbg_src <= 3'd4;
     else if (dbg_read_w)  dbg_src <= 2'd0;
 end
 always @(posedge sys_clk or negedge sys_rst_n) begin
     if (!sys_rst_n) dbg_req_d <= 1'b0;
-    else            dbg_req_d <= dbg_read_w | dbg_nn_w | dbg_wd_w | dbg_fr_w;
+    else            dbg_req_d <= dbg_read_w | dbg_nn_w | dbg_wd_w | dbg_fr_w | dbg_fd_w;
 end
 
-wire [23:0] dbg_v1 = (dbg_src == 2'd1) ? nn_rd1 :
-                     (dbg_src == 2'd2) ? wd_rd1 :
-                     (dbg_src == 2'd3) ? fr_rd1 : dbg_rd1_w;
-wire [23:0] dbg_v2 = (dbg_src == 2'd1) ? nn_rd2 :
-                     (dbg_src == 2'd2) ? wd_rd2 :
-                     (dbg_src == 2'd3) ? fr_rd2 : dbg_rd2_w;
-wire [23:0] dbg_v3 = (dbg_src == 2'd1) ? nn_rd3 :
-                     (dbg_src == 2'd2) ? wd_rd3 :
-                     (dbg_src == 2'd3) ? fr_rd3 : dbg_rd3_w;
+wire [23:0] dbg_v1 = (dbg_src == 3'd1) ? nn_rd1 :
+                     (dbg_src == 3'd2) ? wd_rd1 :
+                     (dbg_src == 3'd3) ? fr_rd1 :
+                     (dbg_src == 3'd4) ? fd_rd1 : dbg_rd1_w;
+wire [23:0] dbg_v2 = (dbg_src == 3'd1) ? nn_rd2 :
+                     (dbg_src == 3'd2) ? wd_rd2 :
+                     (dbg_src == 3'd3) ? fr_rd2 :
+                     (dbg_src == 3'd4) ? fd_rd2 : dbg_rd2_w;
+wire [23:0] dbg_v3 = (dbg_src == 3'd1) ? nn_rd3 :
+                     (dbg_src == 3'd2) ? wd_rd3 :
+                     (dbg_src == 3'd3) ? fr_rd3 :
+                     (dbg_src == 3'd4) ? fd_rd3 : dbg_rd3_w;
 // [10-17] 识别来源切换: 0=TY 规则法(默认, 与升级前一致) 1=神经网络
 wire        ty_src_sel_w;
 wire        win_auto_w;      // [0x97] 自适应选窗
@@ -305,6 +313,10 @@ wire        dbg_wd_w;
 wire        dbg_fr_w;
 wire [7:0]  fr_state_w;
 wire [21:0] fr_idle_w;
+// [10-24] 0x9F: fft_demo 内部状态
+wire        dbg_fd_w;
+wire [7:0]  fd_st_w;
+wire [23:0] fd_idx_w;
 wire [7:0]  wid_span_w;
 wire [11:0] wid_hi_w;
     wire        spec_run_w;    // spec_frame -> self_fft 运行脉冲
@@ -360,7 +372,8 @@ wire [11:0] wid_hi_w;
         .lk_req      (lk_req_w    ),   // [0x9B] 请求 I/Q 帧
         .lk_per      (lk_per_w    ),   // [0x9C] 积分周期数
         .dbg_wd      (dbg_wd_w     ),  // [0x9D] 波形识别内部量回读
-        .dbg_fr      (dbg_fr_w     )   // [0x9E] fft_report 内部状态
+        .dbg_fr      (dbg_fr_w     ),  // [0x9E] fft_report 内部状态
+        .dbg_fd      (dbg_fd_w     )   // [0x9F] fft_demo 状态
         // .cal_load 悬空: 标定值本身是带记忆的寄存器, 脉冲只是预留回执/指示用
     );
 
@@ -564,6 +577,17 @@ wire [11:0] wid_hi_w;
     //   所以钳位不是"保险"，是**必需**。代价是 S=/A= 在四档都只覆盖 0~25kHz，
     //   高频谱线由自研 FFT(0x8A) 与谱帧(0x8E) 提供 —— 那两条已验证到 5MHz。
     //   界面上 T3/T4 时不再显示 S=/A=，避免折叠值误导（见 wavecore_gui.py）。
+    // [10-24 最终结论] IP 核在 decim<100（T3/T4）下**无法完成一帧**，钳位保留。
+    //
+    //   今天试过三次放开：
+    //     ① 直接放开           -> T3/T4 无 S=/A=，0x9E 显示 p_s=0（fft_done 不来）
+    //     ② 修 AXI-Stream 主机握手（tvalid 同拍，PG109 要求）-> 仍无
+    //     ③ 把 m_axis_data_tready 交给状态机控制           -> 仍无
+    //   T1/T2 全程正常。结合 0x9F 探针（状态长期停在 ST_CAP、m_vld 恒高），
+    //   判断是 xfft 核本身在该输入速率下不可用（该核无 aresetn，进入坏状态无法复位）。
+    //
+    //   所以 IP 核只服务 0~25kHz；高频一律用自研 FFT(0x8A) 与谱帧(0x8E)。
+    //   两条通路因此**不是同一频段的对比**，这一点在文档里已写明。
     wire [31:0] fft_decim_w = (tb_decim_w >= 32'd100) ? tb_decim_w : 32'd1000;
     wire [31:0] fft_fs_w    = (tb_decim_w >= 32'd100) ? tb_fs_w    : 32'd50000;
 
@@ -574,6 +598,8 @@ wire [11:0] wid_hi_w;
         .decim_cfg(fft_decim_w),   // [10-24] 高频档固定回落 50kHz，见上
         .fs_cfg  (fft_fs_w   ),
         .fft_hz  (fft_hz_w   ),
+        .dbg_st  (fd_st_w    ),   // [0x9F]
+        .dbg_idx (fd_idx_w   ),
         .fft_hz2 (fft_hz2_w  ),
         .fft_done(fft_done_w ),
         .fft_done2(fft_done2_w)

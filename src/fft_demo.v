@@ -45,7 +45,10 @@ module fft_demo #(
     output reg  [23:0] fft_hz,
     output reg  [23:0] fft_hz2,
     output reg         fft_done,
-    output reg         fft_done2
+    output reg         fft_done2,
+    // [10-24] 0x9F 调试回读: {st, cfg_tready, s_data_tready, m_data_tvalid}
+    output wire [7:0]  dbg_st,
+    output wire [23:0] dbg_idx
 );
 
     //======== [0x8D] 时基: 外部配置优先, 未接(0)时回退参数 ========
@@ -59,11 +62,25 @@ module fft_demo #(
     reg [13:0] wr_idx;
     reg [31:0] decim_cnt;
 
+    // [10-24] 状态声明上移：m_axis_data_tready 在例化里就要引用 ST_WAIT，
+    //   留在下面会被当成隐式 1 位 wire，或直接报 "already declared"。
+    reg [1:0] st;
+    localparam ST_CAP=2'd0, ST_CFG=2'd1, ST_FEED=2'd2, ST_WAIT=2'd3;
+
     //================ xfft_0 ================
     reg        cfg_tvalid;
     wire       cfg_tready;
-    reg        s_data_tvalid, s_data_tlast;
-    reg [31:0] s_data_tdata;
+    // [10-24 关键修复] 三个信号改成**组合**驱动。
+    //   PG109 明确要求 s_axis_data_tready 必须被遵守，且它可能在一帧中途拉低。
+    //   原来 tvalid/tdata/tlast 是寄存器，比 tready 晚一拍：
+    //     第 N 拍看到 tready=1 就认为已发出并推进 rd_idx，
+    //     真正握手发生在第 N+1 拍；那拍 tready 若变低，这个点就丢了。
+    //   丢的若是最后一个点，tlast 随之丢失 -> IP 永不输出 ->
+    //     m_data_tlast 不来 -> 卡死在 ST_WAIT（实测 decim=8 时 p_s 恒 0）。
+    //   decim 大时数据慢、tready 恒高，碰巧不出问题，所以这个 bug 潜伏很久。
+    wire        s_data_tvalid;
+    wire        s_data_tlast;
+    wire [31:0] s_data_tdata;
     wire       s_data_tready;
     wire [31:0] m_data_tdata;
     wire       m_data_tvalid, m_data_tlast;
@@ -80,7 +97,12 @@ module fft_demo #(
         .m_axis_data_tdata          (m_data_tdata   ),
         .m_axis_data_tuser          (               ),
         .m_axis_data_tvalid         (m_data_tvalid  ),
-        .m_axis_data_tready         (1'b1           ),
+        // [10-24 关键修复] 原来接死 1'b1，IP 的输出被"无声吞掉"——
+        //   包括 tlast。状态机在 ST_CAP 期间不处理输出，tlast 就这么丢了，
+        //   fft_done 永不产生（0x9E 实测 p_s 恒 0）。
+        //   改为由状态机控制：只在 ST_WAIT 收输出，其余时间让它堵住。
+        //   这是 AXI-Stream 消费者该做的事，PG109 也要求遵守 tready。
+        .m_axis_data_tready         (st == ST_WAIT  ),
         .m_axis_data_tlast          (m_data_tlast   ),
         .m_axis_status_tdata        (               ),
         .m_axis_status_tvalid       (               ),
@@ -99,8 +121,7 @@ module fft_demo #(
     hann_rom u_hann (.clk(clk), .addr(rd_idx[11:2]), .wout(wq));  // 同步块ROM
 
     //================ 主状态机(写缓存+配置+灌数) ================
-    reg [1:0] st;
-    localparam ST_CAP=2'd0, ST_CFG=2'd1, ST_FEED=2'd2, ST_WAIT=2'd3;
+    // (st 与 localparam 已上移到 xfft_0 例化之前)
 
     reg [7:0] m_q;   // FEED 用的当前样点(独立读 always 产生)
     // [10-19 修复] 下面三个 wire 原来声明在 180 行之后，但 146 行（ST_FEED）就要用 win_out。
@@ -115,17 +136,12 @@ module fft_demo #(
         if (!rst_n) begin
             st           <= ST_CAP;
             cfg_tvalid   <= 1'b0;
-            s_data_tvalid<= 1'b0;
-            s_data_tlast <= 1'b0;
-            s_data_tdata <= 32'd0;
             wr_idx       <= 14'd0;
             rd_idx       <= 14'd0;
             decim_cnt    <= 32'd0;
         end
         else begin
             cfg_tvalid    <= 1'b0;
-            s_data_tvalid <= 1'b0;
-            s_data_tlast  <= 1'b0;
             case (st)
                 ST_CAP: begin                       // 写缓存(写口见上方独立 always)
                     if (decim_cnt == decim_use - 32'd1) begin
@@ -148,14 +164,10 @@ module fft_demo #(
                     end
                 end
                 ST_FEED: begin
+                    // tvalid 恒高（组合），因此这里的条件等价于"握手成功"
                     if (s_data_tready) begin
-                        s_data_tvalid <= 1'b1;
-                        s_data_tdata  <= {16'd0, win_out};
-                        if (rd_idx == NFFT - 1) begin
-                            s_data_tlast <= 1'b1;
-                            st <= ST_WAIT;
-                        end
-                        else rd_idx <= rd_idx + 14'd1;
+                        if (rd_idx == NFFT - 1) st     <= ST_WAIT;
+                        else                     rd_idx <= rd_idx + 14'd1;
                     end
                 end
                 ST_WAIT: begin
@@ -173,6 +185,12 @@ module fft_demo #(
 
     always @(posedge clk)
         if (wr_en_w) f_ram[wr_addr_w] <= ad_cap;
+
+    // [10-24] AXI-Stream 主机侧：tvalid 在 ST_FEED 期间恒高，
+    //   只有 tvalid && tready 同拍为高才算传输成功；tlast 与最后一点严格对齐。
+    assign s_data_tvalid = (st == ST_FEED);
+    assign s_data_tlast  = (st == ST_FEED) && (rd_idx == NFFT - 1);
+    assign s_data_tdata  = {16'd0, win_out};
 
     // ---- 读口: 独立 always, 单条无条件读, **不带异步复位** ----
     // 旧写法 if (!rst_n) m_q<=0 会让 Vivado 拒绝把 f_ram 推断成 RAM
@@ -268,5 +286,9 @@ module fft_demo #(
             end
         end
     end
+
+    // [10-24] 调试回读
+    assign dbg_st  = {st, cfg_tready, s_data_tready, m_data_tvalid, 1'b0};
+    assign dbg_idx = {wr_idx, rd_idx[9:0]};
 
 endmodule
