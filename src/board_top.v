@@ -554,23 +554,24 @@ wire [11:0] wid_hi_w;
         .sel_out (         )
     );
 
-    // [10-23] 给 IP 核 FFT 一个**安全的抽取比**。
-    //   根因：xfft 核的 C_HAS_ARESETN=0，**没有复位端口**。
-    //     T3/T4 的 decim=8/4 会让它进入无法恢复的状态，此后 S=/A= 永久停发，
-    //     切回 T1 也不复活（实测；加过计数器复位、采集闸门、ST_WAIT 看门狗，均无效）。
-    //   处置：与 wave_frame 同样思路——高频档不让它接触 decim<100。
-    //     T1/T2 行为与升级前逐位相同；T3/T4 时 IP 核按 50kHz 继续工作。
-    //   代价：T3/T4 下 S=/A= 只覆盖 0~25kHz（高频谱线由自研 FFT 与谱帧提供）。
+    // [10-24 结论] IP 核 FFT **只跑 50kHz**，不跟随时基。
+    //
+    //   今天做过一次反向实验：撤销钳位、让 decim 直连时基后，T3/T4 下
+    //   S=/A= 完全不出现，0x9E 读出 p_s=0 —— 说明 fft_done 根本没产生，
+    //   即 xfft 在 decim=8/4 下完不成一帧（该核 C_HAS_ARESETN=0，无法软复位）。
+    //   对照：钳位在 1000 时，五轮 T3/T4 往返 S= 始终正常。
+    //
+    //   所以钳位不是"保险"，是**必需**。代价是 S=/A= 在四档都只覆盖 0~25kHz，
+    //   高频谱线由自研 FFT(0x8A) 与谱帧(0x8E) 提供 —— 那两条已验证到 5MHz。
+    //   界面上 T3/T4 时不再显示 S=/A=，避免折叠值误导（见 wavecore_gui.py）。
     wire [31:0] fft_decim_w = (tb_decim_w >= 32'd100) ? tb_decim_w : 32'd1000;
-    wire [31:0] fft_fs_w    = (tb_decim_w >= 32'd100) ? tb_fs_w
-
-                                                       : 32'd50000;
+    wire [31:0] fft_fs_w    = (tb_decim_w >= 32'd100) ? tb_fs_w    : 32'd50000;
 
     fft_demo u_fft_demo (
         .clk     (sys_clk    ),
         .rst_n   (sys_rst_n  ),
         .ad_cap  (ad_cap     ),
-        .decim_cfg(fft_decim_w),   // [10-23] 高频档回落到 1000，见上
+        .decim_cfg(fft_decim_w),   // [10-24] 高频档固定回落 50kHz，见上
         .fs_cfg  (fft_fs_w   ),
         .fft_hz  (fft_hz_w   ),
         .fft_hz2 (fft_hz2_w  ),

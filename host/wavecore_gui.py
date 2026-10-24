@@ -2028,9 +2028,13 @@ class WaveCoreApp:
         f = self.latest_frequency_hz
         if f is None:
             return base
-        if f > 25000:
-            return f"{base}（超 25kHz）"
-        return f"{base}（等稳定）"
+        # [10-24] 这个阈值原来写死 25000，而固件（measure_report.v 的 ty_ok 闸门）
+        #   已经抬到 200kHz。结果：100kHz 下板子明明报了 TY=1，
+        #   一旦它报 3（三角波在高频确实分不出），界面还是显示"超 25kHz"，
+        #   让人以为识别范围没改。阈值必须与固件闸门保持一致。
+        if f > 200_000:
+            return f"{base}（超 200kHz，超出识别范围）"
+        return f"{base}（波形特征不足，等稳定）"
 
     def _handle_event(self, event):
         event_type = event.get("type")
@@ -2080,6 +2084,13 @@ class WaveCoreApp:
             self._record_measurement(event)
 
         elif event_type == "peak":
+            # [10-24] IP 核 FFT 只按 50kHz 采（见 board_top.v 的说明），
+            #   所以 T3/T4 时它报的 S/A 一定是折叠后的值，显示出来只会误导。
+            #   高频档直接标成"不适用"，把用户引到自研 FFT 与谱图上。
+            if self.current_timebase_index >= 2:
+                self.peak_s_var.set("—（高频档不适用，看自研FFT）")
+                self.peak_a_var.set("—")
+                return
             if event["name"] == "S":
                 self.latest_peak_s_hz = event["frequency_hz"]
                 self.peak_s_var.set(f"{event['frequency_hz']} Hz")
