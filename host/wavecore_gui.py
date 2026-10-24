@@ -1509,6 +1509,15 @@ class WaveCoreApp:
             self._send(command_run_self_fft(), "自适应已开，正在判定用哪个窗")
         self._refresh_window_info()
 
+    def _ty_source_code(self):
+        """把下拉框文字转成 0x96 的取值。"""
+        choice = self.wave_src_var.get()
+        if choice.startswith("自动"):
+            return 2
+        if choice.startswith("神经网络"):
+            return 1
+        return 0
+
     def on_wave_src_changed(self, event=None):
         """下拉框一改就切换识别来源（0x96），并立刻要一帧结果。
 
@@ -1522,13 +1531,8 @@ class WaveCoreApp:
         # [10-24] 三态：
         #   自动  = 硬件内部按「两法一致 / 一方报其他 / 频率仲裁」三层判据选
         #   规则法 / 神经网络 = 强制指定，现场要复现某一方法时用
-        choice = self.wave_src_var.get()
-        if choice.startswith("自动"):
-            code, label = 2, "自动"
-        elif choice.startswith("神经网络"):
-            code, label = 1, "神经网络"
-        else:
-            code, label = 0, "规则法"
+        code = self._ty_source_code()
+        label = {2: "自动", 1: "神经网络", 0: "规则法"}[code]
 
         if not self._send(command_set_ty_source(code), "已切换到%s" % label):
             return
@@ -2072,15 +2076,21 @@ class WaveCoreApp:
             port_name = event["port"]
             self.port_var.set(port_name)
             self.connect_button.configure(text="断开", style="Stop.TButton")
-            # 0x8D/0x8C都没有ACK。每次首次连接或断线重连后主动重发
-            # 当前时基和标定值，避免GUI显示状态与FPGA寄存器状态不一致。
+            # 0x8D/0x8C/0x96 都没有 ACK。每次首次连接或断线重连后主动重发
+            # 当前时基、标定值和识别来源，避免 GUI 显示状态与 FPGA 寄存器不一致。
+            #
+            # [10-24] 补上识别来源：之前只重发时基和标定，漏了 0x96。
+            #   后果是界面下拉框显示"自动"（上电默认值），而板子实际还是规则法——
+            #   用户看到的是"我选了自动但高频还是判错"，实际上自动从没下发过。
             self.worker.set_timebase(self.current_timebase_index)
             try:
                 self.worker.send(command_set_timebase(self.current_timebase_index))
                 self.worker.send(command_set_vpp_cal(self.current_vpp_kn))
+                self.worker.send(command_set_ty_source(self._ty_source_code()))
                 self.status_var.set(
                     f"已连接 {port_name} @ {BAUD_RATE}，"
-                    f"已同步T{self.current_timebase_index + 1}时基和KN={self.current_vpp_kn}"
+                    f"已同步T{self.current_timebase_index + 1}时基、KN={self.current_vpp_kn}、"
+                    f"识别源={self.wave_src_var.get()}"
                 )
             except RuntimeError:
                 self.status_var.set(f"已连接 {port_name} @ {BAUD_RATE}")
