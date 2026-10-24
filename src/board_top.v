@@ -250,7 +250,7 @@ wire [23:0] wd_rd3 = {12'd0, wid_hi_w};
 //   S2 = idle_cnt >> 8 (低 8 位没意义, 只看量级)
 //   S3 = dbg_state 的十进制值(方便直接读)
 wire [23:0] fr_rd1 = 24'd900000 + {16'd0, fr_state_w};
-wire [23:0] fr_rd2 = {5'd0, fr_idle_w[18:8]};
+wire [23:0] fr_rd2 = {3'd0, fr_idle_w[21:8]};
 wire [23:0] fr_rd3 = {16'd0, fr_state_w};
 reg  [1:0]  dbg_src;
 always @(posedge sys_clk or negedge sys_rst_n) begin
@@ -304,7 +304,7 @@ wire        dbg_wd_w;
 // [10-24] 0x9E: fft_report 内部状态
 wire        dbg_fr_w;
 wire [7:0]  fr_state_w;
-wire [18:0] fr_idle_w;
+wire [21:0] fr_idle_w;
 wire [7:0]  wid_span_w;
 wire [11:0] wid_hi_w;
     wire        spec_run_w;    // spec_frame -> self_fft 运行脉冲

@@ -19,7 +19,7 @@ module fft_report (
     // [10-24] 调试回读(0x9E): 把"为什么还不发 S="的依据送出去
     //   dbg_state = {window_ok, ext_hold, p_s, p_a, active_r, state[2:0]}
     output wire [7:0]  dbg_state,
-    output wire [18:0] dbg_idle,
+    output wire [21:0] dbg_idle,
     input  wire        ext_hold     // 1=波形帧占用 TX, 本模块暂停开新行
 );
 
@@ -66,15 +66,25 @@ module fft_report (
     reg       mode;        // 0=S行 1=A行
     reg       p_s, p_a;    // 待发主/次行
     reg       active_r;
-    reg [18:0] idle_cnt;
+    reg [21:0] idle_cnt;   // [10-24] 19 -> 22 位，可数到 2e6（40ms）
     reg [27:0] cur_bcd;
 
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) idle_cnt <= 19'd0;
-        else if (meas_busy) idle_cnt <= 19'd0;
-        else if (idle_cnt < 19'd400_000) idle_cnt <= idle_cnt + 19'd1;
+        if (!rst_n) idle_cnt <= 22'd0;
+        else if (meas_busy) idle_cnt <= 22'd0;
+        // [10-24] 这里原来是**饱和**在 400000（=8ms），而 window_ok 要求 <= 350000。
+        //   后果：只要测量行停超过 8ms，计数就顶在 400000 下不来，窗口永久关闭，
+        //   S=/A= 再也不发（0x9E 实测：idle=399872, win=0，且切档也不恢复）。
+        //   改成**绕回**：数到 2,000,000（40ms，接近测量行 42ms 周期）后归零重来。
+        //   正常有 meas_busy 时每 42ms 就被清零，行为与原来完全一致；
+        //   测量行万一停住，窗口也会每 40ms 自动重开一次（开 7ms/40ms），不会永久锁死。
+        //   注意不能只是把窗口开大——实测"窗口常开"会让 S= 抢占测量行，
+        //   回归出现多项随机失败，得不偿失。
+        else if (idle_cnt < 22'd2_000_000) idle_cnt <= idle_cnt + 22'd1;
+        else idle_cnt <= 22'd0;
     end
     wire window_ok = !meas_busy && (idle_cnt >= 19'd3000) && (idle_cnt <= 19'd350_000);
+    // [10-24] 饱和点 340000 < 350000，所以窗口在最坏情况下也会重新打开。
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
