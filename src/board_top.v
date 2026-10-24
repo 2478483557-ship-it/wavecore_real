@@ -244,7 +244,7 @@ wire [23:0] nn_rd3 = {8'd0, nf_f2};
 //   0x9D: SF = 800000 + 类型(0..3)   S2 = span   S3 = hi_cnt
 wire [23:0] wd_rd1 = 24'd800000 + {22'd0, wave_type_w};
 wire [23:0] wd_rd2 = {16'd0, wid_span_w};
-wire [23:0] wd_rd3 = {12'd0, wid_hi_w};
+wire [23:0] wd_rd3 = {11'd0, wid_hi_w};
 // [10-24] 0x9E: fft_report 内部状态
 //   SF = 900000 + dbg_state(8位拆成十进制: 状态位图按二进制解释后加前缀)
 //   S2 = idle_cnt >> 8 (低 8 位没意义, 只看量级)
@@ -318,7 +318,7 @@ wire        dbg_fd_w;
 wire [7:0]  fd_st_w;
 wire [23:0] fd_idx_w;
 wire [7:0]  wid_span_w;
-wire [11:0] wid_hi_w;
+wire [12:0] wid_hi_w;   // [10-24] 窗口扩到 8192，需 13 位
     wire        spec_run_w;    // spec_frame -> self_fft 运行脉冲
     wire [7:0]  spec_wdata_w;  // 谱缓存写数据
     wire [8:0]  spec_waddr_w;  // 谱缓存写地址

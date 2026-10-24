@@ -17,7 +17,9 @@ module wave_id (
     //   dbg_span = 窗口内 max-min（等于 1 倍峰峰值）
     //   dbg_hi   = |x-mid| > 3/8*span 的样点计数（判定就看它）
     output wire [7:0]  dbg_span,
-    output wire [11:0] dbg_hi
+    output wire [12:0] dbg_hi    // [10-24] 12->13 位：窗口已扩到 8192，
+                                 //   原来只有 12 位，方波的 hi(=8191) 被截成 4095，
+                                 //   导致这段时间所有实测数据都是错的。
 );
     // ---- [10-21] 自适应降采样节拍 ----
     // 原来固定 1000（fs=50kHz），导致每周期样点数 spp = 50000/F 随频率下降：
@@ -46,7 +48,7 @@ module wave_id (
     // [10-23] 回读要用"和判定同一时刻"的值: span/hi_cnt 是实时量,
     //   而 wave_type 是窗口结束才锁存的, 直接读会混两个窗口的数据。
     reg  [7:0]  span_r;
-    reg  [11:0] hi_r;
+    reg  [12:0] hi_r;   // [10-24] 与 hi_cnt 同宽（13 位）
     reg  [12:0] hi_cnt;
     wire [7:0]  th3 = (span >> 2) + (span >> 3);     // 3/8*span
     wire [8:0]  abs_d = (med > mid) ? (med - mid) : (mid - med);
@@ -92,8 +94,14 @@ module wave_id (
                 end
                 else begin
                     if (ph == 2'd0) begin
-                        if (s0 > mx) mx <= s0;
-                        if (s0 < mn) mn <= s0;
+                        // [10-24 关键修复] 这里原来用 s0（原始样本，带毛刺）测 min/max，
+                        //   而 phase1 的 hi_cnt 用的是 med（3 点中值滤波后）。
+                        //   两者尺度不一致 -> span 在 133/196 之间跳（1.47 倍），
+                        //   判据 3/8*span 随之变，hi_cnt 在三角区间和"其他"之间翻。
+                        //   实测三角 1kHz 正确率只有 46%，正弦偶尔也掉。
+                        //   改成两边都用 med，尺度统一。
+                        if (med > mx) mx <= med;
+                        if (med < mn) mn <= med;
                     end
                     else begin
                         if (abs_d > th3) hi_cnt <= hi_cnt + 13'd1;
