@@ -276,11 +276,15 @@ class WaveCoreApp:
     #   原来那两档在实机上抓不到数据（decim 太小，波形缓存凑不满），
     #   现已改成 6.25MHz / 12.5MHz，只服务频谱。
     #   ⚠️ 波形帧固定 50kHz，不随档位变化（否则高速率下会卡死，见 wave_frame.v）。
+    # [10-24] 下拉框只留"档位 + 采样率"。
+    #   原来每项后面还挂着"（时域 / 低频）""（高频频谱）"这类补充，
+    #   而下拉框只有 13 字符宽 —— 后半截根本看不见，还把下拉列表撑得很宽。
+    #   这些补充现在统一写在右侧提示面板里，那里有空间完整显示。
     TIMEBASE_CHOICES = (
-        ("T1  50 kHz（时域 / 低频）", 0),
-        ("T2  12.5 kHz（细分辨率）", 1),
-        ("T3  6.25 MHz（高频频谱）", 2),
-        ("T4  12.5 MHz（高频频谱）", 3),
+        ("T1   50 kHz", 0),
+        ("T2   12.5 kHz", 1),
+        ("T3   6.25 MHz", 2),
+        ("T4   12.5 MHz", 3),
     )
 
     # [v1.21 0x8F] 预触发比例：决定触发点在 1024 点波形帧里的位置
@@ -410,6 +414,9 @@ class WaveCoreApp:
         # 上电默认是手动 Hann（与 KN_DEF 一样是「已固化的默认」），
         #   统一走一次刷新，避免初始值与后续格式不一致。
         self._refresh_window_info()
+        # [10-24] 提示面板要等 _build_ui() 建出 hint_text 之后才能填，
+        #   而 _update_timebase_info() 在 _build_ui() 之前就调过一次。
+        self._refresh_hint()
         self.refresh_ports()
         self.root.after(50, self._process_events)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -799,8 +806,59 @@ class WaveCoreApp:
         self.root.bind("<F11>", self._toggle_present_mode)
         self.root.bind("<Escape>", self._exit_present_mode)
 
-        self.plot_notebook = ttk.Notebook(self.root)
-        self.plot_notebook.grid(row=3, column=0, sticky="nsew", padx=12, pady=(4, 10))
+        # [10-24] 绘图区改成两列：左边图表（可伸展），右边一块**提示面板**。
+        #
+        # 起因：全屏投影时图表右边有大片空白（figure 固定 8x4 英寸，
+        #   实际窗口宽得多），而时基说明、自研 FFT 的折叠警告这些长文案
+        #   全挤在控制面板的小格子里 —— 一行写不下就看不见后半截，
+        #   还会把相邻卡片撑开。把这些内容挪到右边空位上，
+        #   既填了空白，也把控制面板解放出来。
+        plot_area = ttk.Frame(self.root)
+        plot_area.grid(row=3, column=0, sticky="nsew", padx=12, pady=(4, 10))
+        plot_area.columnconfigure(0, weight=1)
+        plot_area.rowconfigure(0, weight=1)
+
+        self.plot_notebook = ttk.Notebook(plot_area)
+        self.plot_notebook.grid(row=0, column=0, sticky="nsew")
+
+        # ---- 右侧提示面板 ----
+        # 用只读 Text 而不是一堆 Label：内容长度随时变（时基说明 + 折叠警告 +
+        # 各种临时提示），Label 会撑开面板宽度，Text 只会换行/出滚动条。
+        hint_frame = ttk.LabelFrame(plot_area, text="提示", padding=(8, 6))
+        hint_frame.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+        hint_frame.columnconfigure(0, weight=1)
+        hint_frame.rowconfigure(0, weight=1)
+
+        self.hint_text = tk.Text(
+            hint_frame,
+            width=34,              # 字符宽，实际像素由字体决定
+            wrap="word",           # 按词换行，中文会按字符断
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            padx=2, pady=0,
+            font=("Microsoft YaHei UI", 9),
+            cursor="arrow",
+        )
+        self.hint_text.grid(row=0, column=0, sticky="nsew")
+        hint_scroll = ttk.Scrollbar(hint_frame, orient="vertical",
+                                    command=self.hint_text.yview)
+        hint_scroll.grid(row=0, column=1, sticky="ns")
+        self.hint_text.configure(yscrollcommand=hint_scroll.set)
+
+        # 只读：插入/删除一律拦掉，但保留程序自己改的能力（见 _set_hint_text）
+        self.hint_text.bind("<Key>", lambda e: "break")
+        self.hint_text.bind("<<Paste>>", lambda e: "break")
+        self.hint_text.bind("<<Cut>>", lambda e: "break")
+
+        # 深色标题 / 正文的 tag，便于把"警告"和普通说明区分开
+        self.hint_text.tag_configure("h", font=("Microsoft YaHei UI", 9, "bold"),
+                                     spacing1=6, spacing3=3)
+        self.hint_text.tag_configure("warn", foreground="#A32D2D",
+                                     font=("Microsoft YaHei UI", 9, "bold"),
+                                     spacing1=6, spacing3=3)
+        self.hint_text.tag_configure("body", spacing3=2)
+        self.hint_text.tag_configure("mute", foreground="#5F5E5A", spacing3=2)
         # [10-18] 绘图区保底高度。控制面板一旦再加行, 这里也不会被压到看不见;
         #   超出时窗口会被撑高, 而不是牺牲曲线。
         self.plot_notebook.configure(height=520)
@@ -1344,6 +1402,90 @@ class WaveCoreApp:
             return f"{hz / 1_000_000:g} MHz"
         return f"{hz / 1000:g} kHz"
 
+    # ===================== [10-24] 右侧提示面板 =====================
+    def _set_hint(self, blocks):
+        """重画整个提示面板。
+
+        blocks 是一个列表，元素为 (样式, 文本)：
+            ("h",    "标题")
+            ("warn", "警告标题")
+            ("body", "正文")
+            ("mute", "灰色小字")
+        传空列表等于清空。
+        """
+        widget = getattr(self, "hint_text", None)
+        if widget is None:
+            return
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        for tag, text in blocks:
+            widget.insert("end", text + "\n", tag)
+        widget.configure(state="disabled")
+
+    def _refresh_hint(self):
+        """把当前状态下该说的都摆到提示面板里。
+
+        内容分三段：
+          ① 采样时基 —— 原来挤在控制面板一行里，后半天看不到
+          ② 自研 FFT 的警告 —— 折叠 / 非五次谐波，原来直接拼在读数后面把卡片撑开
+          ③ 随状态变的操作提醒 —— 高频档、切换后要等
+        """
+        blocks = []
+        idx = self.current_timebase_index
+        fs_hz = TIMEBASE_SAMPLE_RATES[idx]
+        resolution_hz = fs_hz / 1024.0
+        span_hz = fs_hz / 2.0
+
+        blocks.append(("h", "采样时基 T%d" % (idx + 1)))
+        blocks.append(("body", "采样率　%s" % self._fmt_hz(fs_hz)))
+        blocks.append(("body", "分辨率　%.1f Hz/bin" % resolution_hz))
+        blocks.append(("body", "频谱　0 ～ %s" % self._fmt_hz(span_hz)))
+        blocks.append(("body", "FFT 1024 点，扫描 bin 1～511"))
+
+        if idx >= 2:
+            blocks.append(("warn", "高频档限制"))
+            blocks.append(("mute", "· IP 核主峰/次峰(S=/A=)不适用"))
+            blocks.append(("mute", "· 时域波形仍按 50kHz，只能看 25kHz 以内"))
+            blocks.append(("mute", "· 高频请直接看下方频谱曲线"))
+        else:
+            blocks.append(("mute", "波形帧固定 50kHz 采样，与时基无关"))
+
+        # ② 自研 FFT 警告（由 _refresh_self_fft_note 填充，这里只留位置）
+        self._refresh_self_fft_note(blocks)
+
+        # ③ 通用操作提醒
+        blocks.append(("h", "操作提醒"))
+        blocks.append(("mute", "· 改波形/改频率后等约 1 秒再读，"))
+        blocks.append(("mute", "　测量模块需要重新收敛"))
+        blocks.append(("mute", "· T3/T4 只能看频谱，看波形请用 T1"))
+
+        self._set_hint(blocks)
+
+    def _refresh_self_fft_note(self, blocks):
+        """自研 FFT 的警告，追加进 blocks。
+
+        原来是拼在读数后面的（"1234 / 3456 / 5678 Hz  <- 第三峰折叠, ..."），
+        那条卡片会被撑得很宽，还挤压旁边的"识别结果"。改成在这里单独讲。
+        """
+        values = [self.latest_self_fft_peaks.get(name) for name in ("SF", "S2", "S3")]
+        note = self._self_fft_note(values)
+        if not note:
+            return
+
+        blocks.append(("warn", "自研 FFT 读数不可信"))
+        if "已超" in note:
+            sf = values[0]
+            expect5 = 5 * sf if sf else 0
+            blocks.append(("mute",
+                           "第三峰（五次谐波）5f=%.0fHz 已越过 24951Hz，" % expect5))
+            blocks.append(("mute", "在 50kHz 采样下混叠折叠，读回的值看着正常"))
+            blocks.append(("mute", "但不可信。"))
+            if expect5:
+                blocks.append(("mute", "折叠后约等于 %.0fHz。" % (50000 - expect5)))
+        else:
+            blocks.append(("mute", "第三峰与 5×基频对不上，可能不是五次谐波，"))
+            blocks.append(("mute", "请勿当作谐波使用。"))
+
     def _update_timebase_info(self):
         idx = self.current_timebase_index
         fs_hz = TIMEBASE_SAMPLE_RATES[idx]
@@ -1354,8 +1496,12 @@ class WaveCoreApp:
             f"Δf={resolution_hz:.1f} Hz，"
             f"频谱范围 0～{self._fmt_hz(span_hz)}"
         )
+        # [10-24] 这里只留最短的一行；采样率/分辨率/频谱范围的完整说明
+        #   在右侧提示面板里（那里空间够，不会写半截被截掉）。
         if idx >= 2:
-            line += "　（高频档，仅频谱）"
+            line = "T%d 高频频谱档" % (idx + 1)
+        else:
+            line = "T%d  %s" % (idx + 1, self._fmt_hz(fs_hz))
         self.timebase_info_var.set(line)
         if hasattr(self, "waveform_frame"):
             # 波形通路已与时基解耦，固定 50kHz —— 不能再写成"当前档位采样"
@@ -1707,6 +1853,7 @@ class WaveCoreApp:
         self._update_applied_settings()
         self._reset_spectrum_history()
         self._reset_waveform_display()
+        self._refresh_hint()
         if index < 2:
             self.peak_s_var.set("-- Hz")
             self.peak_a_var.set("-- Hz")
@@ -2212,11 +2359,14 @@ class WaveCoreApp:
                 self.latest_self_fft_peaks[name]
                 for name in ("SF", "S2", "S3")
             ]
+            # [10-24] 只在卡片里放三个数字，警告挪到右侧提示面板。
+            #   原来把 "  <- 第三峰折叠, 5f=25250 已超 24951" 拼在这行后面，
+            #   卡片被撑宽，挤压旁边的"识别结果"，而且长句根本显示不全。
             self.self_fft_var.set(
                 " / ".join("--" if value is None else str(value) for value in values)
                 + " Hz"
-                + self._self_fft_note(values)
             )
+            self._refresh_hint()
 
         elif event_type == "lockin":
             # [10-23] I/Q -> 幅度/相位
