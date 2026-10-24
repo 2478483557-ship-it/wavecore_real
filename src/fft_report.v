@@ -16,6 +16,10 @@ module fft_report (
     input  wire [23:0] fft_hz2,
     output wire        uart_txd,
     output wire        fft_active,
+    // [10-24] 调试回读(0x9E): 把"为什么还不发 S="的依据送出去
+    //   dbg_state = {window_ok, ext_hold, p_s, p_a, active_r, state[2:0]}
+    output wire [7:0]  dbg_state,
+    output wire [18:0] dbg_idle,
     input  wire        ext_hold     // 1=波形帧占用 TX, 本模块暂停开新行
 );
 
@@ -147,5 +151,7 @@ module fft_report (
     end
 
     assign fft_active = active_r;
+    assign dbg_state = {window_ok, ext_hold, p_s, p_a, active_r, state};
+    assign dbg_idle  = idle_cnt;
 
 endmodule
