@@ -70,7 +70,10 @@ module cmd_decoder (
     output reg         dbg_fr,     // [0x9E] fft_report 内部状态回读 [10-24]
     output reg         dbg_fd,     // [0x9F] fft_demo 状态回读 [10-24]
     output reg         dbg_nn,     // [0x95] 神经网络结果回读(1拍脉冲)  [10-17]
-    output reg         ty_src_sel, // [0x96] 识别来源: 0=TY规则法(默认) 1=神经网络
+    // [10-24] 0x96 扩成三态：0=规则法(默认) 1=神经网络 2=自动
+    //   自动的判据来自实测：≤100kHz 两法都是 100%，用规则法（可解释）；
+    //   >100kHz 规则法除方波外都掉，改用神经网络。
+    output reg  [1:0]  ty_src_sel,
     output reg         win_auto,   // [0x97] 自适应选窗: 0=手动(默认) 1=自动
     output reg         avg_en      // [0x98] 谱平均: 0=关(默认) 1=开(8帧)
 );
@@ -139,7 +142,7 @@ module cmd_decoder (
             dbg_wd      <= 1'b0;
             dbg_fr      <= 1'b0;
             dbg_fd      <= 1'b0;
-            ty_src_sel  <= 1'b0;
+            ty_src_sel  <= 2'd0;
             win_auto    <= 1'b0;
             avg_en      <= 1'b0;
             spec_req    <= 1'b0;
@@ -303,7 +306,7 @@ module cmd_decoder (
                                     lk_per <= {pbuf[1], pbuf[0]};
                                 end
                                 8'h96: begin             // [10-17] 识别来源切换
-                                    ty_src_sel <= pbuf[0][0];
+                                    ty_src_sel <= pbuf[0][1:0];  // [10-24] 取 2 位, 支持 0/1/2
                                 end
                                 8'h95: begin             // [10-17] 神经网络识别结果回读
                                     dbg_nn <= 1'b1;

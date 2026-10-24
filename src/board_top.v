@@ -283,7 +283,7 @@ wire [23:0] dbg_v3 = (dbg_src == 3'd1) ? nn_rd3 :
                      (dbg_src == 3'd3) ? fr_rd3 :
                      (dbg_src == 3'd4) ? fd_rd3 : dbg_rd3_w;
 // [10-17] 识别来源切换: 0=TY 规则法(默认, 与升级前一致) 1=神经网络
-wire        ty_src_sel_w;
+wire [1:0]  ty_src_sel_w;   // [10-24] 0=规则法 1=NN 2=自动
 wire        win_auto_w;      // [0x97] 自适应选窗
 wire        avg_en_w;        // [0x98] 谱平均
 wire [1:0]  ty_show;          // 最终送给 TY= 行的类别
@@ -292,7 +292,33 @@ wire [1:0]  win_now_w;        // [10-18] 实际生效的窗 -> 上报 WIN= 行
 // 神经网络编码:   0=正弦 1=方波 2=三角 3=其他
 //   -> 选 NN 时要把 0/1 互换, 才能让 TY= 行保持同一套语义
 wire [1:0]  nn_as_ty = {nn_cls_r[1], ~(nn_cls_r[0] ^ nn_cls_r[1])};
-assign ty_show = ty_src_sel_w ? nn_as_ty : wave_type_w;
+
+// [10-24] 自动选源（0x96=2）。三层判据，优先级从高到低：
+//
+//   ① 两法一致            -> 直接采信（最可靠，低频段几乎 100% 走这条）
+//   ② 一方报"其他"(3)      -> 采信给出具体类型的那一方
+//        "其他"的含义是"我不确定"，另一方能定就信它。
+//        实测：150k 正弦 规则法报 3、NN 报 1 -> 采 NN，正确。
+//   ③ 两法给出不同的具体类型 -> 按频率仲裁（>100k 信 NN）
+//
+// 为什么不用"纯按频率切"：meas_freq 来自频率计，切频后有明显滞后，
+//   实测按它切换会让 150k 正弦误用规则法（规则法该频段只有 0%）。
+//   而 ① ② 两条不依赖频率，天然免疫这个滞后。
+wire ty_auto_on = (ty_src_sel_w == 2'd2);
+wire ty_both_same = (wave_type_w == nn_as_ty);
+wire ty_rule_other = (wave_type_w == 2'd3);
+wire ty_nn_other   = (nn_as_ty   == 2'd3);
+wire ty_auto_nn_hi = (meas_freq > 24'd100000);   // 仅仲裁用
+
+wire [1:0] ty_auto_pick =
+    ty_both_same   ? wave_type_w :          // ① 一致
+    ty_rule_other  ? nn_as_ty    :          // ② 规则法不确定 -> 用 NN
+    ty_nn_other    ? wave_type_w :          // ② NN 不确定 -> 用规则法
+    ty_auto_nn_hi  ? nn_as_ty    : wave_type_w;  // ③ 都确定但不同 -> 频率仲裁
+
+wire [1:0] ty_src_now = ty_auto_on ? ty_auto_pick
+                                   : (ty_src_sel_w[0] ? nn_as_ty : wave_type_w);
+assign ty_show = ty_src_now;
 // 0x94/0x95 共用同一条上报通路, 用这个标志选数据源
 
     // ---- 0.7c [0x8E] 幅度谱帧相关线(同样必须先声明后使用; 下方 3.7/3.9 会用到) ----
