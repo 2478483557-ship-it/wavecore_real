@@ -754,10 +754,10 @@ class WaveCoreApp:
         )
         ttk.Label(controls, text="波形识别：").grid(row=10, column=0, pady=(4, 0))
 
-        self.wave_src_var = tk.StringVar(value="规则法 (TY)")
+        self.wave_src_var = tk.StringVar(value="自动（推荐）")
         self.wave_src_box = ttk.Combobox(
             controls, textvariable=self.wave_src_var,
-            values=("规则法 (TY)", "神经网络 (NN)"),
+            values=("自动（推荐）", "规则法 (TY)", "神经网络 (NN)"),
             state="readonly", width=15,
         )
         self.wave_src_box.grid(row=10, column=1, columnspan=2, padx=4, pady=(4, 0), sticky="w")
@@ -1519,14 +1519,22 @@ class WaveCoreApp:
           否则 TY 行要等下一次请求才刷新，界面上看着像"切了没反应" ——
           这一点是用户实测反馈后才发现的。
         """
-        use_nn = self.wave_src_var.get().startswith("神经网络")
-        if not self._send(command_set_ty_source(use_nn),
-                          "已切换到%s" % ("神经网络" if use_nn else "规则法")):
+        # [10-24] 三态：
+        #   自动  = 硬件内部按「两法一致 / 一方报其他 / 频率仲裁」三层判据选
+        #   规则法 / 神经网络 = 强制指定，现场要复现某一方法时用
+        choice = self.wave_src_var.get()
+        if choice.startswith("自动"):
+            code, label = 2, "自动"
+        elif choice.startswith("神经网络"):
+            code, label = 1, "神经网络"
+        else:
+            code, label = 0, "规则法"
+
+        if not self._send(command_set_ty_source(code), "已切换到%s" % label):
             return
         # 立刻要一帧，让 TY 行按新来源刷新
         self._send(command_request_waveform(), "已切换识别来源，正在刷新一帧")
-        # [10-18] 同上, 只给短状态, 避免撑宽界面
-        self.wave_src_info_var.set("神经网络" if use_nn else "规则法")
+        self.wave_src_info_var.set(label)
 
     def stop_ifft(self):
         """停止频域滤波，把信号恢复成未滤波状态。
@@ -1668,6 +1676,23 @@ class WaveCoreApp:
             messagebox.showerror("时基错误", str(error))
             return
 
+        # [10-24 演示防雷] T3/T4 是高频频谱档，有两个已知限制：
+        #   ① IP 核 FFT(S=/A=) 在 decim<100 下不出数（已实测确认，非本版本引入）
+        #   ② 波形帧固定 50kHz，高频档看时域没有意义
+        #   现场评委手滑点到就会看到一个"坏掉"的界面。所以这里二次确认，
+        #   并把后果说清楚，而不是默默切过去。
+        if index >= 2:
+            ok = messagebox.askyesno(
+                "切到高频档？",
+                "T3/T4 是高频频谱档：\n\n"
+                "  · 频谱可到 3.1 / 6.25 MHz（自研 FFT）\n"
+                "  · FFT主峰/次峰(S=/A=) 不适用，会显示 \"—\"\n"
+                "  · 时域波形仍按 50kHz，只能看 25kHz 以内\n\n"
+                "演示建议：看高频频谱才切；看波形请留在 T1。\n\n"
+                "确认切换吗？")
+            if not ok:
+                return
+
         if not self._send(frame, f"已发送时基T{index + 1}命令"):
             return
 
@@ -1678,6 +1703,9 @@ class WaveCoreApp:
         self._update_applied_settings()
         self._reset_spectrum_history()
         self._reset_waveform_display()
+        if index < 2:
+            self.peak_s_var.set("-- Hz")
+            self.peak_a_var.set("-- Hz")
 
     def _reset_waveform_display(self):
         """切换时基后清除旧样点，禁止把上一时基的数据按新时间轴重画。

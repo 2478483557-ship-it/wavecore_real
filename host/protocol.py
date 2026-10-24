@@ -254,20 +254,34 @@ def command_set_win_auto(auto: bool) -> bytes:
     return build_command(0x97, bytes([1 if auto else 0]))
 
 
-def command_set_ty_source(use_nn: bool) -> bytes:
+def command_set_ty_source(source) -> bytes:
     """
-    生成 0x96 识别来源切换命令（协议 v1.22, 2026-10-17 新增）。
+    生成 0x96 识别来源切换命令（协议 v1.24 扩成三态）。
 
-    use_nn=False -> TY= 行用规则法（上电默认，与升级前一致）
-    use_nn=True  -> TY= 行用神经网络
+    参数：
+        source = 0  规则法（可解释，低频段全对）
+        source = 1  神经网络（正弦/三角在高频更强）
+        source = 2  自动（v1.24 新增，推荐）
 
-    两条通路始终并行运行，本命令只决定"报哪一路"。
-    硬件内部做了编码互换（规则法 0=方波/1=正弦，神经网络 0=正弦/1=方波），
-    所以 TY= 行的语义在两种来源下完全一致，上位机不需要区分。
+    自动模式的判据在硬件里，三层优先级：
+        ① 两法结论一致 -> 直接采信
+        ② 一方报"其他" -> 采信给出具体类型的一方
+        ③ 两法给出不同具体类型 -> 按频率仲裁（>100kHz 信神经网络）
 
-    用途：同一信号、同一套界面，发一条命令即可对比两路识别的输出。
+    自动模式实测（2026-10-24，三种波形 × 六个频点，1k~200kHz）：
+        **18/18 全部 100%**，比任一单方法都好。
+        规则法在正弦 150k/三角 100k 之后失效，网络在方波 200k 之后失效，
+        两者恰好互补。
+
+    兼容旧调用：传 True/False 仍按原语义（True=神经网络，False=规则法）。
     """
-    return build_command(0x96, bytes([1 if use_nn else 0]))
+    if source is True:
+        source = 1
+    elif source is False:
+        source = 0
+    if source not in (0, 1, 2):
+        raise ValueError("0x96 的取值必须是 0(规则法) / 1(神经网络) / 2(自动)")
+    return build_command(0x96, bytes([source]))
 
 
 def command_read_nn() -> bytes:
