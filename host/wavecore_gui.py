@@ -345,6 +345,7 @@ class WaveCoreApp:
         self.spectrum_frame_count = 0
         self.spectrum_running = False
         self.spectrum_after_id = None
+        self._lockin_after_id = None      # [10-25] 锁相自动轮询定时器
         self.dual_tone_enabled = False
         self.applied_waveform_name = "未设置"
         self.applied_trigger_name = "自由"
@@ -1288,7 +1289,40 @@ class WaveCoreApp:
                    "锁相积分周期 = %d" % periods)
         self._send(build_command(0x9A, bytes([1 if on else 0])),
                    "锁相已开" if on else "锁相已关")
-        self.lockin_info_var.set("已开启，点“读取一次”取结果" if on else "已关闭")
+        if on:
+            # [10-25] 原来这里写"点读取一次取结果"，但硬件其实一直在累加，
+            #   只是 I/Q 结果不会主动推送 —— 必须发 0x9B 才发一帧。
+            #   结果就是用户勾了"启用"却看不到任何数字在动，以为没工作。
+            #   改成开启后自动每 400ms 拉一次，读数就活了。
+            self.lockin_info_var.set("已开启，正在读取…")
+            self._schedule_lockin_poll()
+        else:
+            if self._lockin_after_id is not None:
+                self.root.after_cancel(self._lockin_after_id)
+                self._lockin_after_id = None
+            self.lockin_info_var.set("已关闭")
+
+    def _schedule_lockin_poll(self):
+        """锁相开启后每 400ms 自动拉一帧 I/Q。
+
+        400ms 的来由：积分 32 周期 @1kHz 约 32ms，连请求加传输不到 60ms，
+        所以 400ms 远够 —— 留这么大间隔是为了不让它和测量行抢串口。
+        """
+        if not self.lockin_enabled_var.get():
+            self._lockin_after_id = None
+            return
+        self._lockin_after_id = self.root.after(400, self._poll_lockin_once)
+
+    def _poll_lockin_once(self):
+        self._lockin_after_id = None
+        if not self.lockin_enabled_var.get():
+            return
+        if self.connected:
+            try:
+                self.worker.send(build_command(0x9B, b""))
+            except RuntimeError:
+                pass
+        self._schedule_lockin_poll()
 
     def read_lockin(self):
         """请求一帧 I/Q（0x9B）。结果显示在 lockin_info_var。"""
