@@ -136,11 +136,15 @@ def main():
 
     banner("WaveCore 外部传感器演示")
 
-    print("  接线检查（按顺序做）：")
-    print("    1. 板子 DA 输出 ──> 小喇叭 / 压电片（作为声源）")
-    print("    2. 麦克风/压电片 ──> 放大电路 ──> AD 模块输入端")
-    print("    3. AD 模块 GND ── 放大电路 GND（必须共地）")
-    print("    4. **拔掉原来的 DA→AD 回环飞线**")
+    print("  接线检查（MAX9814 这类带增益的模块，**不需要再焊运放**）：")
+    print("    1. 拔掉原来的 DA->AD 回环飞线")
+    print("    2. 模块 VDD -> 板子 3.3V 或 5V，模块 GND -> 板子 GND")
+    print("    3. 模块 OUT -> ATK_HS_AD_DA 的 AD 输入端（杜邦线/鳄鱼夹都行）")
+    print("    4. 模块 GAIN 引脚留空 = 60dB 档（接 VDD 40dB / 接 GND 50dB）")
+    print("    5. 声源：手机播 1kHz 正弦，或信号发生器接小音箱")
+    print()
+    print("  说明：模块输出自带 1.25V 直流偏置，进 AD 只占 34 码，")
+    print("        不影响 Vpp（峰峰值）也不影响锁相（交流解调），可以不隔直。")
     print()
     input("  接好了按回车继续……")
 
