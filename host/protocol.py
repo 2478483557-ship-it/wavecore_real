@@ -572,9 +572,19 @@ def parse_lockin_frame(frame: bytes):
         raise ValueError("锁相帧太短")
     if frame[:2] != FRAME_HEADER or frame[2] != 0x03:
         raise ValueError("不是锁相帧")
-    # 校验和只覆盖帧体(不含 5A A5 帧头), 与固件 spec_frame 的口径一致
-    if sum(frame[2:21]) & 0xFF != frame[21]:
-        raise ValueError("锁相帧校验失败")
+    # 校验和：协议约定只覆盖帧体(不含 5A A5 帧头)，与 wave_frame / spec_frame 一致。
+    #
+    # [10-25] 但 2026-10-25 之前在片的固件把帧头也算进了校验和
+    #   （lockin_frame.v 原来从 body[0] 起累加），5A+A5=0xFF 让结果恒比正确值小 1，
+    #   于是 GUI 里锁相读数**从来没显示过** —— 解析器每一帧都判校验失败。
+    #   固件已修，但已经烧进 Flash 的板子不会自己变，所以这里同时接受两种口径。
+    #   等所有板子都重烧后，可以把下面这个 old-style 分支删掉。
+    _sum_new = sum(frame[2:21]) & 0xFF
+    _sum_old = (sum(frame[0:21])) & 0xFF        # 含 5A A5，旧固件的算法
+    if frame[21] not in (_sum_new, _sum_old):
+        raise ValueError(
+            "锁相帧校验失败（收到 %02X，应为 %02X）" % (frame[21], _sum_new)
+        )
 
     i_val = int.from_bytes(frame[5:11], "little", signed=True)
     q_val = int.from_bytes(frame[11:17], "little", signed=True)

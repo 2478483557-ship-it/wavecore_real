@@ -41,8 +41,13 @@ module lockin_frame (
         end
         for (k = 0; k < 4; k = k + 1)
             body[17 + k] = n_val[k*8 +: 8];    // N
-        // 校验和：除最后一字节外全部累加取低 8 位
-        body[21] = body[0]  + body[1]  + body[2]  + body[3]  + body[4]
+        // 校验和：从 TYPE 开始累加，**不含帧头 5A A5**，取低 8 位。
+        //   [10-25] 原来是从 body[0] 起累加，把 5A+A5=0xFF 也算了进去，
+        //   于是每一帧的校验和都比正确值小 1，上位机 parse_lockin_frame
+        //   一律判定"锁相帧校验失败" —— GUI 里锁相读数从来没显示过。
+        //   波形帧(wave_frame) 与谱帧(spec_frame) 都是从 TYPE 起算的，
+        //   这里统一成同一口径。
+        body[21] = body[2]  + body[3]  + body[4]
                  + body[5]  + body[6]  + body[7]  + body[8]  + body[9]
                  + body[10] + body[11] + body[12] + body[13] + body[14]
                  + body[15] + body[16] + body[17] + body[18] + body[19]

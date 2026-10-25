@@ -2416,9 +2416,13 @@ class WaveCoreApp:
             if cnt:
                 amp = 2.0 * math.hypot(i_val, q_val) / (32767.0 * cnt)
                 phase = math.degrees(math.atan2(q_val, i_val))
+                # [10-25] 原来是 %.0f：信号小到亚毫伏时（比如没接信号源）
+                #   会显示成 "幅度 0 mV"，看起来像坏了。改成一位小数，
+                #   并且小于 1mV 时补一句提示。
+                _mv = amp * 2.0 * 36.33
                 self.lockin_info_var.set(
-                    "幅度 %.0f mV（峰峰）｜相位 %.0f°｜N=%d"
-                    % (amp * 2.0 * 36.33, phase, cnt)
+                    "幅度 %.1f mV（峰峰）｜相位 %.0f°｜N=%d"
+                    % (_mv, phase, cnt)
                 )
             else:
                 self.lockin_info_var.set("锁相帧 N=0（无有效数据）")
