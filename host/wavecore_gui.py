@@ -2456,7 +2456,13 @@ class WaveCoreApp:
             self.status_var.set("已收到512点幅度谱")
 
         elif event_type == "protocol_error":
-            self.status_var.set(f"协议错误：{event['message']}")
+            _msg = event['message']
+            self.status_var.set(f"协议错误：{_msg}")
+            # [10-25] 状态栏会被下一条事件立刻覆盖，用户根本注意不到。
+            #   锁相帧解析失败时，把原因直接写到锁相那一行 —— 否则表现就是
+            #   "勾了启用但读数一直不出来"，和"算错了"无法区分。
+            if "锁相" in _msg:
+                self.lockin_info_var.set("解析失败：%s" % _msg)
 
     @staticmethod
     def _median_filter_5(samples):
