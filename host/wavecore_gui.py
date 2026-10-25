@@ -916,7 +916,7 @@ class WaveCoreApp:
         ttk.Combobox(
             waveform_actions,
             textvariable=self.waveform_interval_var,
-            values=("500 ms", "1 s", "2 s"),
+            values=("200 ms", "300 ms", "500 ms", "1 s", "2 s"),
             state="readonly",
             width=7,
         ).grid(row=1, column=2, padx=4, pady=(4, 0))
@@ -1187,7 +1187,14 @@ class WaveCoreApp:
             self._stop_auto_waveform()
 
     def _waveform_interval_ms(self):
+        # [10-25] 原来最快只有 500ms（2 帧/s），但硬件实测上限约 23 帧/s：
+        #   一帧 1030 字节 @460800 = 22.4ms，采集 1024 点 @50kHz = 20.5ms，
+        #   单口 RAM 串行 => 42.8ms/帧。
+        #   所以 200ms / 300ms 是安全的，只是以前没开放。
+        #   再快（<100ms）会让 Tkinter 绘图占满 UI 线程，没有意义。
         intervals = {
+            "200 ms": 200,
+            "300 ms": 300,
             "500 ms": 500,
             "1 s": 1000,
             "2 s": 2000,
