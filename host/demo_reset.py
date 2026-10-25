@@ -18,6 +18,8 @@ import time
 
 import serial
 
+from port_pick import pick_port
+
 from protocol import (
     build_command,
     command_set_ty_source,
@@ -28,7 +30,10 @@ from protocol import (
 
 
 def main():
-    port = sys.argv[1] if len(sys.argv) > 1 else "COM5"
+    arg = sys.argv[1] if len(sys.argv) > 1 else None
+    port = pick_port(arg)
+    if port is None:
+        return 1
     s = serial.Serial(port, 460800, timeout=0)
     time.sleep(1.2)
     s.reset_input_buffer()

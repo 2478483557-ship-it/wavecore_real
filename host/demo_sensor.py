@@ -26,6 +26,8 @@ import time
 
 import serial
 
+from port_pick import pick_port
+
 KN = 36.33
 FULL_REF = 32767.0
 FREQ_HZ = 1000
@@ -124,7 +126,10 @@ def fmt(value, unit=""):
 
 
 def main():
-    port = sys.argv[1] if len(sys.argv) > 1 else "COM5"
+    arg = sys.argv[1] if len(sys.argv) > 1 else None
+    port = pick_port(arg)
+    if port is None:
+        return 1
     rig = Rig(port)
     time.sleep(1.5)
     rig.s.reset_input_buffer()

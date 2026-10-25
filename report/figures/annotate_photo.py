@@ -38,7 +38,10 @@ TASKS = [
     ("回环飞线", "DA → AD 那根短线", "lr"),
 ]
 
-ACCENT = (200, 40, 40)
+# PIL 用 RGB 元组，tkinter 只认十六进制字符串 —— 两套分开定义，
+# 之前把元组传给 tk 的 fg= 直接抛 TclError: unknown color name "200 40 40"
+ACCENT = (200, 40, 40)          # PIL 绘图用
+ACCENT_HEX = "#c82828"          # tkinter 控件用
 INK = (25, 25, 25)
 WHITE = (255, 255, 255)
 
@@ -125,8 +128,8 @@ class App:
                 txt.configure(bg="#e8f5ee", fg="#0a7a4a")
                 num.configure(text="✓")
             elif i == cur:
-                box.configure(bg="#fdecec"); num.configure(bg="#fdecec", fg=ACCENT)
-                txt.configure(bg="#fdecec", fg=ACCENT)
+                box.configure(bg="#fdecec"); num.configure(bg="#fdecec", fg=ACCENT_HEX)
+                txt.configure(bg="#fdecec", fg=ACCENT_HEX)
                 num.configure(text="%d" % (i + 1))
             else:
                 box.configure(bg="#ffffff"); num.configure(bg="#ffffff", fg="#999")
@@ -136,8 +139,8 @@ class App:
         for i, (x, y) in enumerate(self.points):
             sx, sy = x * self.scale, y * self.scale
             self.canvas.create_oval(sx - 7, sy - 7, sx + 7, sy + 7,
-                                    outline=ACCENT, width=3, tags="mark")
-            self.canvas.create_text(sx + 12, sy - 12, text=str(i + 1), fill=ACCENT,
+                                    outline=ACCENT_HEX, width=3, tags="mark")
+            self.canvas.create_text(sx + 12, sy - 12, text=str(i + 1), fill=ACCENT_HEX,
                                     font=("Microsoft YaHei UI", 12, "bold"), tags="mark")
 
     def on_click(self, ev):

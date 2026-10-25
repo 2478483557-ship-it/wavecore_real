@@ -216,7 +216,7 @@ wavecore/
 ├── board/             # XDC、引脚表、串口协议 v1.24、复验清单、flash_guide
 ├── host/              # 上位机：protocol.py + 一键工具（波形/仪表/频谱/瀑布图/微弱信号演示）
 ├── hw_analysis/       # 验证脚本与数值金标准（probe_interp / verify_hann_window / check_protocol_frames …）
-├── skill/             # 技能包 SK-001~081（抗噪/触发/FFT四坑/固化/量化定标/时序/文档一致性/空读纪律等）
+├── skill/             # 技能包 SK-001~083（抗噪/触发/FFT四坑/固化/量化定标/时序/文档一致性/空读纪律等）
 └── report/            # 设计报告 / 精度标定 / 技术专题 / LLM 记录 / figures（配图与生成脚本）
 ```
 
@@ -248,7 +248,7 @@ wavecore/
 - **锁相 SNR 曲线**：`report/lockin_snr_curve.md`（含"真值算法自己会让锁相背锅"的修正记录）
 - **工程问题复盘**：`report/engineering_challenges.md`（12 个真实案例）
 - **LLM 协作记录**：`report/llm_collab_log.md`（58 条）
-- **技能包（踩坑总结）**：`skill/README.md`（**SK-001~081**，81 条）
+- **技能包（踩坑总结）**：`skill/README.md`（**SK-001~083**，83 条）
 - **技术文档 vs 官方要求核对**：`report/tech_doc_vs_requirement.md`
 
 ### 命令号速查（v1.24）

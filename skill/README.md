@@ -1870,3 +1870,73 @@ end
   但 `S=` 开始抢占测量行，回归出现 3~5 项**随机**失败。
   **用"经常出错"换"偶尔卡死"是错的**，尤其对测量仪器。最终选了"周期性窄开"。
 - **来源**：WaveCore 2026-10-24（IP FFT 停发，已修复）
+
+## SK-082 · 生成 .bat 时把转义符写多了 —— 17 个一键脚本有一半点不开
+
+- **现象**：双击 `run_xxx.bat`，窗口一闪就报
+  ```
+  系统找不到指定的路径。
+  [ERROR] Python 3.8 not found.
+  ```
+  但 Python 明明装着，路径也确实是那个。
+- **根因**：用 Python 生成 .bat 时，把**给格式化字符串用的转义**直接写进了文件：
+  ```python
+  content = '''
+  cd /d %%~dp0
+  set PY=C:////Users////Lenovo////...////python.exe
+  if not exist "%%PY%%" goto nopy
+  "%%PY%%" -u foo.py %%~1
+  '''
+  ```
+  - `%%` 是**格式化时**才需要双写的；直接写文件应该用单个 `%`
+  - `\\\\` 在普通字符串里是 `\\` 两个，写进文件就是四斜杠 `C://Users//`
+  - 结果：`cd /d %%~dp0` 展开成 `%` + 提示符路径，`set PY` 设成
+    `C:////Users////Lenovo////...`，`"%PY%"` 变成字面量字符串
+- **为什么 `if not exist` 没兜住**：`if not exist "%%PY%%"` 里的变量名本身就错了，
+  判断的是 `%PY%`（空），永远为真 → 直接 goto nopy 打印"找不到"。
+- **★ 关键教训：只验证"纯 ASCII + CRLF"是不够的。**
+  我当时的自检是
+  ```python
+  print('纯ASCII:', all(x<128 for x in b), ' CRLF:', b.count(b'\r\n'))
+  ```
+  两项都通过，文件仍然是坏的 —— **编码对 ≠ 内容对**。
+- **正确自检**（三条都要）：
+  ```python
+  # ① 含变量名的行，除 for 语句外，单个 % 才是对的
+  for ln in t.split("\n"):
+      if ln.strip().lower().startswith("for "): continue   # for %%i 合法
+      assert "%%" not in ln, "变量名双写了: " + ln
+  # ② 盘符路径里不能有连续两个斜杠
+  assert not re.search(r'[A-Za-z]:[\\/]{2,}', t)
+  # ③ 真正跑一次
+  subprocess.run(["cmd", "/c", bat], timeout=60, input="")
+  ```
+- **那次是怎么发现的**：用户双击后截图发我。**17 个 .bat 里 5 个是坏的**，
+  而其中 3 个（run_ifft / run_ovl / run_win）因为 `C://` 被 Windows 规范化了、
+  又走 `for /f where python` 兜底，**一直是能跑的** —— 所以坏了几周没人发现。
+  真正坏的 4 个（run_demo_weak / run_scan_snr / annotate_photo / run_demo_sensor）
+  是缺兜底路径的。
+- **修法**：生成时用 `%` 单个、`\` 单个；或用 Write 工具直接写文件（不经 Python 字符串）。
+- **顺带修的体验问题**：所有演示脚本原先硬编码 `COM5`，
+  板子换口就报 `could not open port 'COM5'`，而这句报错
+  **看不出是"端口名不对"还是"板子没插"**。抽了 `host/port_pick.py`：
+  CH340/USB-Serial 优先、蓝牙虚拟口排最后，找不到时列出所有串口并标注哪个是蓝牙。
+- **来源**：WaveCore 2026-10-25（用户点 annotate_photo.bat 报错）
+
+## SK-083 · tkinter 不认 PIL 的 RGB 元组
+
+- **现象**：`_tkinter.TclError: unknown color name "200 40 40"`
+- **根因**：同一个颜色变量既给 PIL 用又给 tkinter 用。
+  ```python
+  ACCENT = (200, 40, 40)                    # PIL 要元组
+  num.configure(fg=ACCENT)                  # tkinter 要 "#c82828"
+  ```
+- **规则**：**两套颜色常量分开命名**，别图省事共用一个
+  ```python
+  ACCENT     = (200, 40, 40)   # PIL
+  ACCENT_HEX = "#c82828"       # tkinter
+  ```
+  凡是 `fg=` / `bg=` / `fill=` / `outline=` 出现在 tk 控件上，一律用十六进制串。
+- **为什么之前没发现**：只测了"脚本语法 OK"和"窗口能建起来"，
+  没走到 `refresh()` 里改颜色的那几行。**GUI 类代码必须把交互路径走完**。
+- **来源**：WaveCore 2026-10-25（annotate_photo.py）

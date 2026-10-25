@@ -1,10 +1,10 @@
 @echo off
 REM WaveCore weak-signal demo. Run this in front of the judges.
 REM It walks through three steps and prints a conclusion table at the end.
-cd /d %%~dp0
-set PY=C:////Users////Lenovo////AppData////Local////Programs////Python////Python38////python.exe
-if not exist "%%PY%%" goto nopy
-"%%PY%%" -u demo_weak_signal.py %%~1
+cd /d "%~dp0"
+set "PY=C:\Users\Lenovo\AppData\Local\Programs\Python\Python38\python.exe"
+if not exist "%PY%" goto nopy
+"%PY%" -u demo_weak_signal.py %~1
 echo.
 echo ---------------------------------------------------------------
 echo  Demo finished. If the numbers above look wrong, check:
