@@ -27,14 +27,17 @@ from tkinter import messagebox
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 FIG_DIR = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(FIG_DIR, "fig_p3_board.jpg")
-OUT = os.path.join(FIG_DIR, "fig_p3_board_annotated.jpg")
+# 改成全景照：主板 + AD/DA 模块 + 全部接线。
+# 原来的 fig_p3_board.jpg 只拍了主板，看不到 AD/DA 模块和飞线。
+SRC = os.path.join(FIG_DIR, "fig_p7_full_setup.jpg")
+OUT = os.path.join(FIG_DIR, "fig_p7_full_setup_annotated.jpg")
 
 # 顺序即标注顺序。anchor 决定标签往哪个方向摆（避免压住板子主体）
 TASKS = [
-    ("ADC 输入", "AD9280 模块输入端\n（回环时接 DAC 输出）", "ul"),
-    ("DAC 输出", "AD9708 模块输出端\n（接回环飞线）", "ll"),
-    ("串口 USB", "CH340 转 USB\n460800-8N1", "ul"),
+    ("AD/DA 模块", "ATK_HS_AD_DA\nAD9280 采集 + AD9708 输出", "ul"),
+    ("ADC 输入口", "AD 排针输入端\n（回环时接 DAC 输出）", "ll"),
+    ("DAC 输出口", "DA 排针输出端\n（接回环飞线）", "ll"),
+    ("串口 USB", "CH340 转 USB\n460800-8N1", "ur"),
     ("回环飞线", "DA → AD 那根短线", "lr"),
 ]
 
