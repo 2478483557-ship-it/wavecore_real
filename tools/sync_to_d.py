@@ -212,26 +212,59 @@ def main():
         if os.path.isdir(hsrc) and os.path.isdir(hdst):
             n_same = n_diff = n_add = 0
             changed = []
+
+            # [10-25] 原来这里只有 `if not f.endswith(".py"): continue`，
+            #   于是**.bat 从来没被同步过** —— 而用户双击的恰恰是 .bat。
+            #   表现：改了 run_gui.bat / 新增了 run_sensor_monitor.bat，
+            #   D 盘里根本没有，或者还是旧的。用户点的是旧脚本，看到的还是旧行为。
+            #
+            #   现在按扩展名分别处理：
+            #     .py  -> UTF-8 + CRLF（Python 3 按 UTF-8 读）
+            #     .bat -> 纯 ASCII + CRLF（cmd 按 GBK 读批处理，中文会乱）
+            #     其余（.md/.txt）-> UTF-8 + CRLF
+            #   运行时产物（png/csv/srt/json/jpg）不同步，它们不是代码。
+            SKIP_EXT = {".png", ".jpg", ".csv", ".srt", ".xlsx", ".docx"}
+            ALLOW_EXT = {".py", ".bat", ".md", ".txt"}
+
             for f in sorted(os.listdir(hsrc)):
-                if not f.endswith(".py"):
-                    continue
                 a_path = os.path.join(hsrc, f)
+                if not os.path.isfile(a_path):
+                    continue
+                ext = os.path.splitext(f)[1].lower()
+                if ext in SKIP_EXT or ext not in ALLOW_EXT:
+                    continue
+
                 b_path = os.path.join(hdst, f)
-                a = read_text(a_path)
+                with open(a_path, "rb") as fh:
+                    raw = fh.read()
+
+                # 统一成 LF 再写，避免源文件本来就是 CRLF 时变成 CRCRLF
+                body = raw.replace(b"\r\n", b"\n")
+                if ext == ".bat":
+                    # 批处理必须纯 ASCII + CRLF，否则 cmd 解析会错
+                    try:
+                        body.decode("ascii")
+                    except UnicodeDecodeError:
+                        print("  [跳过] host/%s 含非 ASCII 字符，批处理不能这样" % f)
+                        continue
+                out = body.replace(b"\n", b"\r\n")
+
                 if not os.path.exists(b_path):
                     n_add += 1
-                elif read_text(b_path) == a:
-                    n_same += 1
-                    continue
                 else:
+                    with open(b_path, "rb") as fh:
+                        if fh.read() == out:
+                            n_same += 1
+                            continue
                     n_diff += 1
+
                 if args.write:
                     with open(b_path, "wb") as fh:
-                        fh.write(a.replace("\n", "\r\n").encode("utf-8"))
-                    back = read_text(b_path)
-                    if back != a:
-                        print("  [失败] host/%s 回读不一致" % f)
-                        return 1
+                        fh.write(out)
+                    with open(b_path, "rb") as fh:
+                        if fh.read() != out:
+                            print("  [失败] host/%s 回读不一致" % f)
+                            return 1
                     changed.append(f)
             print("host/ 一致 %d 个，需更新 %d 个，新增 %d 个"
                   % (n_same, n_diff, n_add))
@@ -239,6 +272,61 @@ def main():
                 print("  已更新: %s" % ", ".join(changed))
         else:
             print("host/ 目录不存在，跳过")
+
+    # ---- sim/：测试平台与仿真脚本 ----
+    #   [10-25] 原来只同步 src 和 host，sim/ 一直没人管。
+    #   D 盘 sim 里只有 2 个老文件，而仓库有 538 个 —— 想跑仿真时对不上。
+    #   sim/ 里混有 .v（必须 GBK 给 xsim 读）和 .py/.sh（UTF-8），按扩展名分开处理。
+    if args.with_host:
+        ssrc = os.path.join(os.path.dirname(src), "sim")
+        sdst = os.path.join(os.path.dirname(args.dst), "sim")
+        if os.path.isdir(ssrc) and os.path.isdir(sdst):
+            n_same = n_diff = n_add = 0
+            changed = []
+            GBK_EXT = {".v", ".sv", ".vh"}
+            SKIP = {".png", ".jpg", ".csv", ".wdb", ".log"}
+            for dirpath, _dirs, files in os.walk(ssrc):
+                rel = os.path.relpath(dirpath, ssrc)
+                for f in sorted(files):
+                    ext = os.path.splitext(f)[1].lower()
+                    if ext in SKIP:
+                        continue
+                    if ext not in GBK_EXT and ext not in {".py", ".sh", ".bat", ".md", ".txt"}:
+                        continue
+                    a_path = os.path.join(dirpath, f)
+                    rel_path = f if rel == "." else os.path.join(rel, f)
+                    b_path = os.path.join(sdst, rel_path)
+                    os.makedirs(os.path.dirname(b_path), exist_ok=True) if os.path.dirname(b_path) else None
+
+                    with open(a_path, "rb") as fh:
+                        raw = fh.read()
+                    body = raw.replace(b"\r\n", b"\n")
+                    crlf = body.replace(b"\n", b"\r\n")
+
+                    if ext in GBK_EXT:
+                        out = crlf.decode("utf-8").encode("gbk", "replace")
+                    else:
+                        out = crlf
+
+                    if not os.path.exists(b_path):
+                        n_add += 1
+                    else:
+                        with open(b_path, "rb") as fh:
+                            if fh.read() == out:
+                                n_same += 1
+                                continue
+                        n_diff += 1
+
+                    if args.write:
+                        with open(b_path, "wb") as fh:
+                            fh.write(out)
+                        changed.append(rel_path)
+            print("sim/ 一致 %d 个，需更新 %d 个，新增 %d 个"
+                  % (n_same, n_diff, n_add))
+            if args.write and changed and len(changed) <= 12:
+                print("  已更新: %s" % ", ".join(changed))
+        else:
+            print("sim/ 目录不存在，跳过")
 
     print("同步完成。别忘了重新综合（rebuild_bitstream.bat）。")
     return 0
