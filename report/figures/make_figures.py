@@ -102,7 +102,8 @@ print('图2 预触发四档对比')
 # ============ 图3 资源优化前后 ============
 fig, ax = plt.subplots(figsize=(10,5.2))
 labels=['整改前\n（f_ram 未进 BRAM）','整改后\n（SDP 模板）','功能扩展后\n（当前交付版）']
-vals=[20829,5117,7063]
+# [10-26] 第三根柱原为 7063（10-02 版）。当前实现报告 7886，已同步。
+vals=[20829,5117,7886]
 colors=['#E24B4A','#639922','#185FA5']
 b=ax.bar(labels,vals,color=colors,width=0.52,zorder=3)
 ax.axhline(20800,color='#888780',lw=1.3,ls='--',zorder=2)

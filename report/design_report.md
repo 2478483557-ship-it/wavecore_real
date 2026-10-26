@@ -22,9 +22,9 @@
 | **幅度谱帧** | **512 bin / 518 B / 11.2 ms**，对数压缩约 96dB 动态范围 | 0x8E；上位机实时频谱 + **瀑布图**（扫频呈斜线）|
 | 波形采集 | 1024 点@50kHz（20.5ms，**随 0x8D 时基档位变**）；触发：自由/上升/下降 | 帧首点=触发点（单写者+指针归零） |
 | 波形识别 | 正弦/方波/三角/异常（TY=1/0/2/3） | 占比法 + 可信闸门（测不准时报"其他"） |
-| 通信 | UART 460800-8N1，帧协议 **v1.20**（命令号分配表见 `board/uart_protocol.md` §4.1） | 带宽常态占用约 10%，波形帧 22ms；谱帧 518B≈11.2ms |
-| 资源占用 | LUT **33.96%** ｜ FF 17.68% ｜ DSP 38.89% ｜ BRAM 22.0% | 资源攻坚后大幅下降；含 Hann 窗/ILA/统一 Vpp 三项改进，详见 `report/lut_slim_report.md` |
-| 时序 | **WNS +1.607ns**（全收敛，TNS/THS=0） | 50MHz 单时钟域 |
+| 通信 | UART 460800-8N1，帧协议 **v1.24 / 28 条**（命令号分配表见 `board/uart_protocol.md` §4.1） | 带宽常态占用约 10%，波形帧 22ms；谱帧 518B≈11.2ms |
+| 资源占用 | LUT **37.91%** ｜ FF 17.02% ｜ DSP 44.44% ｜ BRAM 24.00% | 资源攻坚后大幅下降；含 Hann 窗/ILA/统一 Vpp 三项改进，详见 `report/lut_slim_report.md` |
+| 时序 | **WNS +0.613ns**（全收敛，TNS/THS=0） | 50MHz 单时钟域 |
 | 交付形态 | **Flash 固化**：断电重启自运行 | 无需 JTAG/上位机即可出数据 |
 
 ---
@@ -60,7 +60,7 @@
 | 测量 | freq_meter / measure_report | 闸门法/测周法、占空比/脉宽/Vpp、四层抗噪；F/D/W/TY 上报 |
 | 频谱 | fft_demo / fft_report / hann_rom / self_fft_1024 / self_fft_report / twiddle_rom | 4096 点 IP 链与自研 1024 点链；S/A 与 SF/S2/S3 上报 |
 | **幅度谱/瀑布** | **spec_compress / spec_buf / spec_frame** | 对数压缩（17bit→8bit）→ 512×8 分布式 RAM → 518B 帧发送机（0x8E）|
-| **时基** | **timebase** | 0x8D **固件四档**：decim 250/500/1000/4000 → 等效采样率 200k/100k/50k/12.5kHz<br>⚠️ **上位机当前只开放 50k / 12.5k** |
+| **时基** | **timebase** | 0x8D **四档全开放**：T1 decim=1000 → 50kHz；T2 decim=4000 → 12.5kHz；**T3 decim=8 → 6.25MHz**；**T4 decim=4 → 12.5MHz**（10-23 起 T3/T4 为高频频谱档，频谱覆盖 0~3.125MHz / 0~6.25MHz，只服务频谱通路） |
 | 采集与识别 | wave_frame / wave_id / sweep_ctrl / bin2bcd / div_restore | 触发采集、波形识别、扫频、显示转换辅助 |
 
 ### 2.3 关键原理（摘要）
