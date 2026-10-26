@@ -40,6 +40,37 @@ def load(path):
     return rows
 
 
+def apply_thru(dut, thru):
+    """直通归一化：把系统自身的响应除掉，只留被测件。
+
+    幅度：除以 thru 的锁相值（再按 1kHz 归一）
+    相位：减去 thru 的相位，再展开成连续曲线
+    """
+    tm = {r["f"]: r for r in thru}
+    ref_d, ref_t = None, None
+    for r in sorted(dut, key=lambda x: x["f"]):
+        t = tm.get(r["f"])
+        if not t or not t["lk"] or r["lk"] is None:
+            continue
+        if ref_d is None:
+            ref_d, ref_t = r["lk"], t["lk"]
+        r["lk"] = r["lk"] / t["lk"] * ref_t      # 去掉系统幅度
+        if r["ph"] is not None and t["ph"] is not None:
+            r["ph"] = r["ph"] - t["ph"]
+    # 相位展开
+    prev = None
+    for r in sorted(dut, key=lambda x: x["f"]):
+        if r["ph"] is None:
+            continue
+        if prev is not None:
+            while r["ph"] > prev + 180:
+                r["ph"] -= 360
+            while r["ph"] < prev - 180:
+                r["ph"] += 360
+        prev = r["ph"]
+    return dut
+
+
 def unwrap(ph_list):
     """把 -180..180 的相位展开成连续序列。"""
     out = []
@@ -82,7 +113,7 @@ def fit(rows):
     fc = math.exp((lo + hi) / 2)
 
     # ---- 相位：线性最小二乘解 φ0 与 Td（fc 已定） ----
-    base = -np.degrees(np.arctan(f / fc))
+    base = 180.0 - np.degrees(np.arctan(f / fc))
     y = p - base
     A = np.column_stack([np.ones_like(f), f])
     coef, *_ = np.linalg.lstsq(A, y, rcond=None)
@@ -111,12 +142,19 @@ def main():
     T = lambda zh, en: zh if cn else en
 
     rows = load(CSV_IN)
+    thru_path = os.path.join(HERE, "..", "..", "host", "bode_thru.csv")
+    calibrated = False
+    if os.path.exists(thru_path):
+        rows = apply_thru(rows, load(thru_path))
+        calibrated = True
     f, v, p, fc, phi0, td = fit(rows)
 
     print("=" * 62)
     print("  一阶有源低通 · 实测拟合")
     print("=" * 62)
     print()
+    print("  直通校准  %s" % ("已做（系统响应已除掉）" if calibrated
+                              else "★未做，依赖系统平坦假设"))
     print("  截止频率  fc = %.0f Hz  （标称 2.2k + 4.7nF = 15393 Hz）" % fc)
     print("  相位偏移  φ0 = %+.1f°" % phi0)
     print("  系统延迟  Td = %.2f µs  （约 %.1f 个 25MSPS 采样点）"
@@ -131,7 +169,7 @@ def main():
         if not r["lk"] or r["ph"] is None:
             continue
         th = v[0] / math.sqrt(1 + (r["f"] / fc) ** 2)
-        ph_th = phi0 - math.degrees(math.atan(r["f"] / fc)) - 360 * r["f"] * td
+        ph_th = phi0 + 180.0 - math.degrees(math.atan(r["f"] / fc)) - 360 * r["f"] * td
         # 折回 -180..180 比较
         ph_w = (ph_th + 180) % 360 - 180
         print("  %-9s %-10.0f %-10.0f %+7.1f%% %-10.0f %-9.0f"
@@ -175,23 +213,23 @@ def main():
     ax1.text(4.6e5, 1.5, T("Vpp 撞本底\n读数失真", "Vpp at floor"),
              fontsize=8.2, color="#993C1D", ha="center", va="top")
 
-    ph_th = phi0 - np.degrees(np.arctan(ff / fc)) - 360 * ff * td
+    ph_th = phi0 + 180.0 - np.degrees(np.arctan(ff / fc)) - 360 * ff * td
     ax2.semilogx(ff, ph_th, "-", color="#B4B2A9", lw=2.4)
     ax2.semilogx(f, p, "o", color="#0F6E56", ms=5, mfc="white", mew=1.3)
-    ax2.axhline(-90, color="#888", ls="--", lw=0.9)
-    ax2.text(1.05e3, -85, T("一阶低通极限 −90°",
+    ax2.axhline(90, color="#888", ls="--", lw=0.9)
+    ax2.text(1.05e3, 95, T("一阶反相低通极限 +90°",
                             "first-order limit"), fontsize=8,
              color="#666")
     ax2.annotate(T("高频超出 −90°，\n是系统延迟 %.2fµs 造成\n（约 8 个采样点）"
                    % (td * 1e6),
                    "beyond -90 due to %.2fus delay" % (td * 1e6)),
-                 xy=(6.9e5, -190), xytext=(1.15e5, -215),
+                 xy=(6.9e5, 62), xytext=(1.05e5, 8),
                  fontsize=8.3, color="#993C1D",
                  arrowprops=dict(arrowstyle="->", color="#993C1D", lw=0.9))
     ax2.set_ylabel(T("相位 / °", "phase / deg"), fontsize=10)
     ax2.set_xlabel(T("频率 / Hz（对数轴）", "frequency / Hz"), fontsize=10)
-    ax2.set_ylim(-250, 15)
-    ax2.set_yticks([0, -45, -90, -135, -180, -225])
+    ax2.set_ylim(-30, 205)
+    ax2.set_yticks([180, 135, 90, 45, 0])
     ax2.grid(True, which="both", ls=":", lw=0.5, alpha=0.5)
     ax2.set_xlim(900, 1.15e6)
 
