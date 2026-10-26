@@ -582,8 +582,13 @@ def parse_lockin_frame(frame: bytes):
     _sum_new = sum(frame[2:21]) & 0xFF
     _sum_old = (sum(frame[0:21])) & 0xFF        # 含 5A A5，旧固件的算法
     if frame[21] not in (_sum_new, _sum_old):
+        # [10-26] 报错时把原始帧一起打出来。
+        #   只看"收到 7E 应为 7F"没法判断是固件旧、线路错、还是取帧错位；
+        #   把 22 字节原样摊开，一眼就能认出是哪种。
         raise ValueError(
-            "锁相帧校验失败（收到 %02X，应为 %02X）" % (frame[21], _sum_new)
+            "锁相帧校验失败（收到 %02X，应为 %02X / 旧口径 %02X）；原始帧 %s"
+            % (frame[21], _sum_new, _sum_old,
+               " ".join("%02X" % b for b in frame))
         )
 
     i_val = int.from_bytes(frame[5:11], "little", signed=True)
