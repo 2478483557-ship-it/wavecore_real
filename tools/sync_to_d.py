@@ -304,7 +304,20 @@ def main():
                     crlf = body.replace(b"\n", b"\r\n")
 
                     if ext in GBK_EXT:
-                        out = crlf.decode("utf-8").encode("gbk", "replace")
+                        # [10-26] 原来直接 encode("gbk","replace")，
+                        #   GBK 存不下的字符（²/⁴/✓/✗/⚠）会被静默替换成 "?"，
+                        #   同步过去的注释就坏了，而比对时又看不出来。
+                        #   这里先试严格编码；不通过就点名报出来，让人去改源文件。
+                        _s = crlf.decode("utf-8")
+                        try:
+                            out = _s.encode("gbk")
+                        except UnicodeEncodeError as _e:
+                            _bad = sorted({c for c in _s
+                                           if not c.encode("gbk", "ignore")})
+                            print("  [编码损失] %s 含 GBK 不支持字符 %s，已用 ? 代替"
+                                  % (rel_path,
+                                     " ".join(repr(c) for c in _bad[:6])))
+                            out = _s.encode("gbk", "replace")
                     else:
                         out = crlf
 

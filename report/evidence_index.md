@@ -71,8 +71,8 @@
 
 | # | 结论 | 测试条件 | 来源 | 证据 |
 |---|---|---|---|---|
-| S1 | LUT 7891（37.94%）/ FF 7082 / BRAM 12 / DSP 40 | Vivado 2020.2，实现后 place | `<工程根>/wavecore.runs/impl_1/board_top_utilization_placed.rpt`（**构建产物，不入库**） | **必须看 placed 报告**，不能看综合估计 |
-| S2 | WNS +0.677ns、WHS +0.056ns、0 失败端点 | 同上 | `<工程根>/wavecore.runs/impl_1/board_top_timing_summary_routed.rpt` | 设计摘要表（Design Timing Summary） |
+| S1 | LUT 7886（37.91%）/ FF 7082 / BRAM 12 / DSP 40 | Vivado 2020.2，实现后 place | `<工程根>/wavecore.runs/impl_1/board_top_utilization_placed.rpt`（**构建产物，不入库**） | **必须看 placed 报告**，不能看综合估计 |
+| S2 | WNS +0.613ns、WHS +0.057ns、0 失败端点 | 同上 | `<工程根>/wavecore.runs/impl_1/board_top_timing_summary_routed.rpt` | 设计摘要表（Design Timing Summary） |
 | S3 | 自研 FFT 502 LUT / 346 FF / 7 DSP | OOC 综合该模块 | `report/resource_compare.md` | 与 IP 核 1771 LUT / 9 DSP 同口径 |
 | S4 | 资源攻坚 20829 → 5117 LUT（−75.4%） | 改 SDP 模板前后各一次实现 | `report/lut_slim_report.md` | 两次 placed 报告对比 |
 

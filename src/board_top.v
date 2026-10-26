@@ -5,7 +5,7 @@
 //   v1.0 M2   : fcw 写死 1MHz 出波
 //   v1.1 M3   : KEY0 切 4 档频率, LED 显示档位
 //   v1.2 M4a  : AD9280 采集(ad_clk 25MHz + 下降沿采样), ILA probe2=ad_cap
-//   v1.3 M4b  : 频率计/峰峰值测量, 结果经串口 115200 上报电脑
+//   v1.3 M4b  : 频率计/峰峰值测量, 结果经串口上报电脑(当时115200, v1.8起460800)
 // 作者     : WaveCore 队长 | 日期: 2026-09-03 | 版本: v1.3
 //===========================================================================
 
@@ -18,8 +18,8 @@ module board_top (
     output wire [7:0]  da_data,    // DAC 数据总线      (AD9708: C19~C13)
     output wire        ad_clk,     // ADC 采样时钟 25MHz (AD9280: D20)
     input  wire [7:0]  ad_data,    // ADC 数据总线      (AD9280: B22~D16)
-    output wire        uart_txd,   // 串口发送 (CH340: D17, 115200)
-    input  wire        uart_rxd,   // 串口接收 (CH340: E14, 115200, M5 命令)
+    output wire        uart_txd,   // 串口发送 (CH340: D17, 460800-8N1)
+    input  wire        uart_rxd,   // 串口接收 (CH340: E14, 460800-8N1, M5 命令)
     output wire        uart_stm32_txd,  // F1 转发口: FPGA->STM32 (P1: N13, LVCMOS33)
     input  wire        uart_stm32_rxd   // F1 转发口: STM32->FPGA (P1: R14, LVCMOS33)
 );

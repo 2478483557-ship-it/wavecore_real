@@ -5,8 +5,8 @@
 //              pk = max|x|
 //              f0 = cnt(x>0)/1024                    -> Q15: cnt*32
 //              f1 = |mean(x)|/pk                     -> Q15: |Σx|*32/pk
-//              f2 = min(kurt/3, 1), kurt = m4/m2^2   -> Q15: Σx⁴*2^25/(3·(Σx²)²)
-//              f3 = min(rms/pk, 1)                   -> Q15: √(Σx²)*1024/pk
+//              f2 = min(kurt/3, 1), kurt = m4/m2^2   -> Q15: Σx^4*2^25/(3·(Σx^2)^2)
+//              f3 = min(rms/pk, 1)                   -> Q15: √(Σx^2)*1024/pk
 //              f4 = min(mean|dx|/pk*2, 1)            -> Q15: Σ|dx|*64/pk
 //              f5 = 过零率/1024                       -> Q15: zc*32
 // 关键设计 : 只有 pk 需要除 -> 累加器全在 x 域做, 除法留到最后统一做;
@@ -38,8 +38,8 @@ module wave_feat (
     // ---- 累加器(位宽按最坏情况推) ----
     reg [10:0]        a_hi;           // count(x>0)      ≤1024      -> 11
     reg signed [20:0] a_s;            // Σx              |≤|1024*128 -> 21
-    reg [26:0]        a_sq;           // Σx²             ≤16.8e6   -> 27
-    reg [39:0]        a_x4;           // Σx⁴             ≤2.7e11   -> 40 ← 最宽
+    reg [26:0]        a_sq;           // Σx^2             ≤16.8e6   -> 27
+    reg [39:0]        a_x4;           // Σx^4             ≤2.7e11   -> 40 ← 最宽
     reg [19:0]        a_sl;           // Σ|x[n]-x[n-1]|  ≤1024*255 -> 20
     reg [10:0]        a_zc;           // 过零次数        ≤1024      -> 11
 
@@ -75,7 +75,7 @@ module wave_feat (
     reg        op_run;
     reg [15:0] r_sqrt;
     reg [21:0] sx_abs;                // |Σx|
-    reg [39:0] d4;                    // Σx⁴/Σx²
+    reg [39:0] d4;                    // Σx^4/Σx^2
 
     wire busy   = dv_bsy | sq_bsy;
     wire dv_end = dv_bsy & (dv_i == 6'd39);
@@ -167,22 +167,22 @@ module wave_feat (
                                     dv_d <= {17'd0, pk};
                                     dv_r <= 40'd0; dv_q <= 40'd0; dv_i <= 6'd0; dv_bsy <= 1'b1;
                                 end
-                                4'd2: begin   // ③ 开方 √(Σx²)
+                                4'd2: begin   // ③ 开方 √(Σx^2)
                                     sq_x <= {5'd0, a_sq};
                                     sq_r <= 32'd0; sq_q <= 16'd0; sq_b <= 16'h8000;
                                     sq_i <= 6'd0; sq_bsy <= 1'b1;
                                 end
-                                4'd3: begin   // ④ f3 = √(Σx²)*1024 / pk
+                                4'd3: begin   // ④ f3 = √(Σx^2)*1024 / pk
                                     dv_n <= {24'd0, sq_cap} << 10;
                                     dv_d <= {17'd0, pk};
                                     dv_r <= 40'd0; dv_q <= 40'd0; dv_i <= 6'd0; dv_bsy <= 1'b1;
                                 end
-                                4'd4: begin   // ⑤ d4 = Σx⁴ / Σx²
+                                4'd4: begin   // ⑤ d4 = Σx^4 / Σx^2
                                     dv_n <= a_x4;
                                     dv_d <= {1'b0, a_sq[24:0]};                 // 26 位(a_sq≤16.8e6 < 2^25)
                                     dv_r <= 40'd0; dv_q <= 40'd0; dv_i <= 6'd0; dv_bsy <= 1'b1;
                                 end
-                                4'd5: begin   // ⑥ f2 = d4*2^25 / (3·Σx²)
+                                4'd5: begin   // ⑥ f2 = d4*2^25 / (3·Σx^2)
                                     dv_n <= d4 << 25;
                                     dv_d <= (a_sq[24:0] * 3'd3);                // ≤50.4e6 < 2^26
                                     dv_r <= 40'd0; dv_q <= 40'd0; dv_i <= 6'd0; dv_bsy <= 1'b1;

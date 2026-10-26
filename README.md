@@ -17,7 +17,7 @@ A multi-function signal measurement & spectrum analysis system based on FPGA.
 |---|---|---|
 | **弱信号提取** | **−18.8 dB SNR 下误差 0.8%** | 同一时刻常规 Vpp 偏 12 倍（3487 mV vs 真值 290 mV） |
 | **频率测量** | **100 Hz ~ 1 MHz，误差 <1%** | 闸门法 / 测周法自动切换，1 MHz 时误差 0.01% |
-| **整片占用** | **LUT 37.94%，WNS +0.613 ns** | 十六项特性共用一套引擎，零失败端点 |
+| **整片占用** | **LUT 37.91%，WNS +0.613 ns** | 十六项特性共用一套引擎，零失败端点 |
 
 ---
 
