@@ -74,3 +74,6 @@ last_*.log
 sim/**/play_wave.txt
 sim/**/ifft_dump.txt
 *.txt.bak
+
+# create_project.tcl 的产物目录（工程由脚本重建，不入库）
+recreate/

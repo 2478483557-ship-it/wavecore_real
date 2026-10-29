@@ -216,20 +216,108 @@ wavecore/
 ├── board/             # XDC、引脚表、串口协议 v1.24、复验清单、flash_guide
 ├── host/              # 上位机：protocol.py + 一键工具（波形/仪表/频谱/瀑布图/微弱信号演示）
 ├── hw_analysis/       # 验证脚本与数值金标准（probe_interp / verify_hann_window / check_protocol_frames …）
-├── skill/             # 技能包 SK-001~083（抗噪/触发/FFT四坑/固化/量化定标/时序/文档一致性/空读纪律等）
+├── skill/             # 技能包 SK-001~088（抗噪/触发/FFT四坑/固化/量化定标/时序/文档一致性/空读纪律等）
 └── report/            # 设计报告 / 精度标定 / 技术专题 / LLM 记录 / figures（配图与生成脚本）
 ```
 
 ## How to Reproduce / 复现步骤
 
-1. Vivado 2020.2 打开 `wavecore.xpr`（或按 `build/` 的 tcl 重建）
-2. Add Sources：`src/*.v`；IP：`xfft_0`（4096 点 FFT）、`blk_mem_gen_0`（1024×8 波形缓存）、
-   `blk_mem_gen_1`（自研 FFT 存储）、`hann_rom`、`ila_0`（`ILA_EN` 置 `1'b0` 可一键关闭）
-3. 约束用 `board/wavecore.xdc`
-4. 综合 → 实现 → 生成 bitstream → Program Device
-5. 按"怎么玩"验证；若要断电自启，用 `build/gen_mcs.bat` + `build/program_flash.bat` 固化 Flash
-6. 复现关键指标：`hw_analysis/` 下的脚本（`probe_interp` 复现 976→999、`verify_hann_window` 复现泄漏比、
-   `check_protocol_frames` 审计全部命令帧）
+> **仓库里不含 `.xpr`**（Vivado 工程文件含大量本机绝对路径，且可被脚本完整重建）。
+> 所以下面的 Tcl 脚本是**唯一的复现路径**，不是备选项。全程约 8~15 分钟。
+
+### 前置条件
+
+| 项 | 要求 | 检查方式 |
+|---|---|---|
+| Vivado | **2020.2**（其他版本见本节末尾） | `vivado -version` |
+| 器件 | Artix-7 `xc7a35tfgg484-2` | — |
+| Python（上位机） | **3.8**，装 `pyserial numpy matplotlib` | `python -c "import serial"` |
+| 硬件 | 主板 + ATK_HS_AD_DA 模块 + 一根回环跳线 | — |
+
+```bash
+pip install pyserial numpy matplotlib
+```
+
+### 步骤
+
+**1. 重建工程**（在仓库根目录执行）
+
+```bash
+vivado -mode batch -source build/create_project.tcl
+# 或在 Vivado Tcl Console 里：
+#   cd <repo>; source build/create_project.tcl
+```
+
+脚本依次完成：建工程 → 把 `src/*.v` 拷到 `recreate/generated_src/` 并把 `$readmemh`
+的绝对路径改成指向该目录 → 加入 RTL / testbench / `board/wavecore.xdc` → 重建 3 个 IP
+→ 设 `board_top` 为顶层。
+
+工程生成在 `recreate/wavecore/wavecore.xpr`（**由脚本生成，不入库**）。
+
+**2. 综合 → 实现 → 生成 bitstream**
+
+```bash
+vivado -mode batch -source build/reset_and_build.tcl
+```
+
+**3. 烧板**
+
+```bash
+board/program_device.bat          # 烧 SRAM，掉电即失
+# 若要断电自启（固化 Flash）：
+build/gen_mcs.bat && build/program_flash.bat
+```
+
+> 烧板脚本在 `board/`，构建脚本在 `build/`，别弄混。
+
+**4. 按下面的判据验证**
+
+### 关于 IP 和 ROM，三个容易踩的点
+
+- **只有 3 个 IP**：`blk_mem_gen_0`（1024×9 波形缓存）、`blk_mem_gen_1`
+  （1024×32 FFT 存储）、`xfft_0`（4096 点）。全部由 Tcl 按固定参数重建，
+  **仓库里不需要 `.xci`**。
+- **`hann_rom` / `blackman_rom` / `sine_rom` / `twiddle_rom` 不是 IP**，
+  是 `src/` 下的普通 Verilog 模块，随 `src/*.v` 一起编译。
+- **没有 `ila_0`**：调试核已在交付版关闭（`board_top.v` 中 `ILA_EN = 1'b0`），
+  脚本刻意不创建，可省 729 LUT / 1253 FF / 1 块 RAMB36。要调试则改 `ILA_EN=1`
+  并自行添加 ILA IP。
+
+> ⚠️ **ROM 初始化文件用了绝对路径。** 若不用上面的 Tcl 而手工建工程，
+> 必须先跑 `python build/relocate.py --root <工程根目录> --apply` 重定位。
+> 原因：`$readmemh` 找不到文件时**综合可能不报错**，ROM 会变成 X/0，
+> 上板后波形全错却不报错——这类故障极难定位。
+> （走 Tcl 路径已自动处理，无需手工跑。）
+
+### 复现成功的判据
+
+按下表核对，**数值落在范围内才算复现成功**：
+
+| 检查项 | 期望值 | 数据来源 |
+|---|---|---|
+| 实现资源 | LUT **7886 (37.91%)** / FF **7082 (17.02%)** / BRAM **12 (24.00%)** / DSP **40 (44.44%)** | `impl_1/*_utilization_placed.rpt` |
+| 时序 | WNS **+0.613 ns**、WHS +0.057 ns、**0 失败端点** | `impl_1/*_timing_summary_routed.rpt` |
+| 上电行为 | 约 1 s 内串口（**460800-8N1**）开始输出 `F=` 测量行 | 串口助手 |
+| 频率测量 | 设 1 kHz，`F=` 读数在 999 附近（误差 <1%） | `5A A5 85 00 04 E8 03 00 00 74` |
+| 自研 FFT | 1 kHz 方波三峰 `SF/S2/S3` ≈ **999 / 2998 / 4997** | `5A A5 8A 00 01 00 8B` |
+| 电压读数 | 回环方波 1~4 V 内偏差 ≤ 2.8% | `V=` 字段 |
+
+> ⚠️ **资源数字只能看实现报告，不能看综合报告**——综合把 OOC IP 当黑盒，
+> 总数会小 20% 以上。同一版设计这三份报告口径不同，用错一份就会误判"资源不够"。
+
+### 数值层面的复现（不接板也能跑）
+
+```bash
+python hw_analysis/probe_interp.py            # 插值 976 → 999 Hz
+python hw_analysis/verify_hann_window.py      # 泄漏 14.7% → 0.9%
+python hw_analysis/check_protocol_frames.py   # 全部命令帧校验和审计
+```
+
+### 其他 Vivado 版本
+
+设计与版本无关（标准 RTL、无版本专有原语），但重新生成 IP 后单元计数与时序余量
+会小幅变动。换版本时应**重新读取实现报告**，不要沿用 +0.613 ns。
+详见技术文档 §3.6。
 
 ## 演示与交付材料
 
@@ -248,7 +336,7 @@ wavecore/
 - **锁相 SNR 曲线**：`report/lockin_snr_curve.md`（含"真值算法自己会让锁相背锅"的修正记录）
 - **工程问题复盘**：`report/engineering_challenges.md`（12 个真实案例）
 - **LLM 协作记录**：`report/llm_collab_log.md`（58 条）
-- **技能包（踩坑总结）**：`skill/README.md`（**SK-001~083**，83 条）
+- **技能包（踩坑总结）**：`skill/README.md`（**SK-001~088**，83 条）
 - **技术文档 vs 官方要求核对**：`report/tech_doc_vs_requirement.md`
 
 ### 命令号速查（v1.24）

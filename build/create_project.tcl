@@ -16,6 +16,10 @@
 # Notes:
 #   - ILA debug core is intentionally NOT created (debug only, removed from
 #     the delivered design to save resources).
+#   - 仓库里**没有 .xpr**，所以本脚本是唯一的从零复现路径，不是备选项。
+#   - hann_rom / blackman_rom / sine_rom / twiddle_rom 是 src/ 下的普通 RTL
+#     模块（不是 IP），由上面的 glob 一起加入。
+#   - 只有 3 个 IP 由本脚本重建：blk_mem_gen_0 / blk_mem_gen_1 / xfft_0。
 #   - IP read latency: blk_mem_gen_1 must behave as 2-cycle read (see SK-025).
 #     If synthesis reports differ, verify CONFIG output-register options.
 #============================================================================
@@ -58,7 +62,17 @@ puts "== copied [llength $rtl_files] RTL files + hex tables"
 # ---------- 3) add sources ----------
 add_files -norecurse -fileset sources_1 [glob -nocomplain [file join $gen_dir *.v]]
 add_files -norecurse -fileset sim_1       [glob -nocomplain [file join $sim_dir *.v]]
-add_files -norecurse -fileset constrs_1   [file join $src_dir wavecore.xdc]
+
+# [10-30] 这里原先写成 $src_dir，但 xdc 实际在 board/ 下。
+#   add_files 指向不存在的文件会直接报错，脚本就此中断 ——
+#   而这又是唯一的复现路径（仓库里没有 .xpr），等于整个复现流程跑不通。
+set xdc_file [file join $repo_dir board wavecore.xdc]
+if {![file exists $xdc_file]} {
+    puts "ERROR: constraint file not found: $xdc_file"
+    puts "       仓库结构应为 <repo>/board/wavecore.xdc"
+    error "missing XDC"
+}
+add_files -norecurse -fileset constrs_1 $xdc_file
 
 set_property top board_top [get_filesets sources_1]
 if {[llength [get_files -of_objects [get_filesets sim_1]]] > 0} {
@@ -111,7 +125,12 @@ puts "=========================================================="
 puts "== DONE. Project created at: $proj_dir"
 puts "== Next steps:"
 puts "==   1) Open project, run Synthesis -> Implementation -> Bitstream"
-puts "==   2) Expected resources: LUT ~95%, FF ~91%, DSP 24, BRAM 9"
+puts "==   2) Expected resources (ILA_EN=0, current delivered build):"
+puts "==        LUT 7886 (37.91%) / FF 7082 (17.02%)"
+puts "==        BRAM 12 (24.00%)  / DSP 40 (44.44%)"
+puts "==        WNS +0.613 ns, 0 failing endpoints"
+puts "==      Read them from impl_1/*_utilization_placed.rpt, NOT from the"
+puts "==      synthesis report (OOC IPs are black boxes there)."
 puts "==   3) For simulation: Run Behavioral (tb_cmd_decoder)"
 puts "==   4) Flash guide: see board/flash_guide.md"
 puts "=========================================================="
