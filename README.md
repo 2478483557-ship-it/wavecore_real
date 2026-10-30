@@ -321,9 +321,8 @@ python hw_analysis/check_protocol_frames.py   # 全部命令帧校验和审计
 
 ## 演示与交付材料
 
-- **技术文档**：`技术文档_WaveCore.pdf`（30 页，18 张图：系统框图、接口示意、完整测试连接、软件架构、6 张流程图、5 张实物照片、锁相选择性曲线、实测波特图）
-- **演示视频模板**：`视频模板/WaveCore_demo_template.mp4`（2 分 57 秒，片头 + 17 项功能 + 片尾）
-- **答辩稿 / 提词卡**：`答辩稿_WaveCore.md`、`答辩提词卡_一页.md`
+- **技术文档**：`技术文档_WaveCore.pdf`（35 页，18 张图：系统框图、接口示意、完整测试连接、软件架构、6 张流程图、5 张实物照片、锁相选择性曲线、实测波特图）
+- **演示视频**：2 分 58 秒，片头 + 16 项特性 + 片尾（随作品提交，不在仓库内）
 - **微弱信号演示脚本**：`host/run_demo_weak.bat`（三步走：干净 → −0.6dB → −18.8dB）
 
 ## 文档索引
@@ -335,8 +334,8 @@ python hw_analysis/check_protocol_frames.py   # 全部命令帧校验和审计
 - **精度标定**：`report/accuracy_calibration.md`
 - **锁相 SNR 曲线**：`report/lockin_snr_curve.md`（含"真值算法自己会让锁相背锅"的修正记录）
 - **工程问题复盘**：`report/engineering_challenges.md`（12 个真实案例）
-- **LLM 协作记录**：`report/llm_collab_log.md`（58 条）
-- **技能包（踩坑总结）**：`skill/README.md`（**SK-001~088**，83 条）
+- **LLM 协作记录**：`report/llm_collab_log.md`（**#001~#060**，60 条）
+- **技能包（踩坑总结）**：`skill/README.md`（**SK-001~SK-088**，共 88 条）
 - **技术文档 vs 官方要求核对**：`report/tech_doc_vs_requirement.md`
 
 ### 命令号速查（v1.24）
