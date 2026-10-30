@@ -21,7 +21,29 @@ import tempfile
 
 RAR = r"D:/Other application/WinRAR/Rar.exe"
 REPO = r"C:/Users/Lenovo/WorkBuddy/2026-09-02-11-10-14/wavecore"
-OUT = r"C:/Users/Lenovo/Desktop/嵌赛文件/WaveCore_源代码.rar"
+# [10-30] 桌面目录会被改名/搬家（这次从 Desktop/嵌赛文件 变成了
+#   Desktop/2026嵌赛fpga赛道文件/嵌赛文件）。硬编码会让 rar 报 code 9
+#   并且错误信息还是 GBK 乱码，很难看出是路径问题。改成自动探测。
+def _resolve_out():
+    import os as _os
+    for _c in (r"C:/Users/Lenovo/Desktop/2026嵌赛fpga赛道文件/嵌赛文件",
+               r"C:/Users/Lenovo/Desktop/嵌赛文件"):
+        if _os.path.isdir(_c):
+            return _os.path.join(_c, "WaveCore_源代码.rar")
+    _d = r"C:/Users/Lenovo/Desktop"
+    try:
+        for _n in _os.listdir(_d):
+            _p = _os.path.join(_d, _n)
+            if _os.path.isdir(_p) and "嵌赛" in _n:
+                _q = _os.path.join(_p, "嵌赛文件")
+                return _os.path.join(_q if _os.path.isdir(_q) else _p,
+                                     "WaveCore_源代码.rar")
+    except OSError:
+        pass
+    return r"C:/Users/Lenovo/Desktop/WaveCore_源代码.rar"
+
+
+OUT = _resolve_out()
 TOP = "WaveCore_src"
 
 # 顶层要收的目录（白名单，比黑名单安全）
@@ -44,7 +66,11 @@ SKIP_EXT = {".pyc", ".pyo", ".swp", ".swo", ".wdb", ".jou", ".log",
 
 
 def want(name, ext):
-    if name in SKIP_NAMES or name.startswith(".git"):
+    # [10-30] 原来写 startswith(".git")，把 **.gitignore / .gitattributes**
+    #   也一起排除了 —— 根目录那两个因为走 INCLUDE_FILES 才侥幸进包，
+    #   但 sim/board_elab/.gitignore 这类子目录里的就漏掉了。
+    #   只有目录名恰好等于 ".git" 才是版本库。
+    if name in SKIP_NAMES or name == ".git":
         return False
     if ext.lower() in SKIP_EXT:
         return False
