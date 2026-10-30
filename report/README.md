@@ -17,7 +17,8 @@
 | `lut_slim_report.md` | 资源攻坚全过程：LUT 100.14% 超容 → 20,829 → 5,117 的根因分析与闭环证据 |
 | `resource_compare.md` | 自研 FFT 与厂商 IP 的同口径资源对比 |
 | `t3t4_disable_2026-10-14.md` | 时基 T3/T4 为何撤除（诚实说明 + 恢复方法） |
-| `sensor_frontend_guide.md` | 传感器前端选型与接线方案（**未接入实测**，仅留档） |
+| `sensor_frontend_guide.md` | 传感器前端选型与接线方案（选型留档；**实测结果见 `sensor_lockin_demo.md` 与技术文档图 3-5/3-6**） |
+| `sensor_lockin_demo.md` | 外部声源接入麦克风模块的完整操作单（**2026-10-26 已实测**，−3dB 全宽 47 Hz） |
 
 ## 二、技术专题
 
